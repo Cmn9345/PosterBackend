@@ -1,0 +1,113 @@
+@import "tailwindcss";
+
+@font-face {
+  font-family: "GenWanMin TW";
+  src: url("/fonts/GenWanMinTW-R.woff2") format("woff2");
+  font-weight: 400 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "GenWanMin TW";
+  src: url("/fonts/GenWanMinTW-SB.woff2") format("woff2");
+  font-weight: 600 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@theme {
+  --font-sans: "Noto Sans TC", sans-serif;
+  --color-primary: #003366;
+  --color-primary-light: #004d99;
+  --color-primary-dark: #002244;
+  --color-surface: #F8F9FA;
+}
+
+@layer base {
+  body {
+    font-family: var(--font-sans);
+    background-color: var(--color-surface);
+    color: #1f2937;
+    min-height: 100vh;
+  }
+
+  h1, h2, h3, h4, h5, h6,
+  button,
+  nav a {
+    font-family: "GenWanMin TW", "Noto Serif TC", serif;
+  }
+}
+
+@layer components {
+  .font-title {
+    font-family: "GenWanMin TW", "Noto Serif TC", serif;
+  }
+
+  .card-box {
+    background: white;
+    border-radius: 16px;
+    padding: 24px;
+    box-shadow: 0 0 10px rgba(128, 128, 128, 0.15);
+  }
+
+  /* ===== Permission Modal ===== */
+  .pm-glass {
+    background: rgba(255, 255, 255, 0.62);
+    backdrop-filter: blur(22px) saturate(140%);
+    -webkit-backdrop-filter: blur(22px) saturate(140%);
+    border: 1px solid rgba(255, 255, 255, 0.9);
+    box-shadow:
+      0 1px 0 0 rgba(255, 255, 255, 0.9) inset,
+      0 30px 60px -20px rgba(20, 50, 90, 0.35),
+      0 8px 20px -10px rgba(20, 50, 90, 0.2);
+  }
+
+  .pm-perm-on {
+    background: linear-gradient(180deg, #ffffff 0%, #eaf2fb 100%);
+    border: 1px solid rgba(59, 125, 184, 0.35);
+    box-shadow:
+      0 1px 0 rgba(255, 255, 255, 0.9) inset,
+      0 10px 24px -8px rgba(59, 125, 184, 0.45),
+      0 2px 6px -2px rgba(59, 125, 184, 0.25);
+  }
+
+  .pm-perm-off {
+    background: rgba(240, 243, 248, 0.55);
+    border: 1px dashed rgba(30, 50, 80, 0.15);
+  }
+
+  .pm-slash::after {
+    content: "";
+    position: absolute;
+    inset: 12px;
+    pointer-events: none;
+    background: linear-gradient(to top right, transparent 0 47.5%, currentColor 47.5% 52.5%, transparent 52.5% 100%);
+    opacity: 0.35;
+    border-radius: 12px;
+  }
+
+  .pm-ring:focus {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(59, 125, 184, 0.35);
+  }
+
+  .pm-press:active {
+    transform: translateY(1px);
+  }
+
+  @keyframes pmPermIn {
+    from { opacity: 0; transform: scale(0.82); filter: blur(2px); }
+    to   { opacity: 1; transform: scale(1); filter: blur(0); }
+  }
+  .pm-perm-anim { animation: pmPermIn 280ms cubic-bezier(.2,.7,.2,1) both; }
+
+  @keyframes pmModalIn {
+    from { opacity: 0; transform: translateY(12px) scale(0.97); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  .pm-modal-anim { animation: pmModalIn 220ms cubic-bezier(.2,.7,.2,1) both; }
+
+  @keyframes pmBackdropIn { from { opacity: 0 } to { opacity: 1 } }
+  .pm-backdrop-anim { animation: pmBackdropIn 200ms ease-out both; }
+}

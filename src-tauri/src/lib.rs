@@ -1,0 +1,224 @@
+mod commands;
+mod services;
+
+use commands::{auth, upload, copaw, project, review, profile};
+use services::qwenpaw::task_queue::{ProcessingTask, TaskQueue};
+use services::upload_db::UploadDb;
+use std::sync::Arc;
+use tauri::Manager;
+
+/// Frontend-facing command: enqueue a poster file for metadata/thumbnail processing.
+#[tauri::command]
+async fn qwenpaw_enqueue(
+    queue: tauri::State<'_, Arc<TaskQueue>>,
+    task: ProcessingTask,
+) -> Result<(), String> {
+    queue.submit(task);
+    Ok(())
+}
+
+/// Generic Supabase query command — allows frontend to read any table.
+#[tauri::command]
+async fn query_supabase(
+    state: tauri::State<'_, upload::UploadState>,
+    table: String,
+    query: String,
+) -> Result<String, String> {
+    state.supabase_client.query(&table, &query).await
+}
+
+/// Update a user's `app_role` in `public.users`. Backs the Permission
+/// Management modal. RLS ensures only `app_role = '系統管理員'` callers can
+/// actually mutate — the Rust side is a thin passthrough so the same policy
+/// that governs the Supabase UPDATE governs this command.
+#[tauri::command]
+async fn patch_user_role(
+    state: tauri::State<'_, upload::UploadState>,
+    user_id: String,
+    role: String,
+) -> Result<(), String> {
+    state
+        .supabase_client
+        .update_user_role(&user_id, &role)
+        .await
+}
+
+/// Return a short-lived signed URL for a thumbnail stored in the
+/// `poster-thumbnails` bucket. Used by the review page to render previews.
+#[tauri::command]
+async fn sign_thumbnail_url(
+    state: tauri::State<'_, upload::UploadState>,
+    path: String,
+) -> Result<String, String> {
+    state
+        .supabase_client
+        .create_signed_url("poster-thumbnails", &path, 600)
+        .await
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    // Load .env file (if present) so GOOGLE_CLIENT_ID etc. are available
+    dotenvy::dotenv().ok();
+    // Initialize upload database
+    let app_data_dir = dirs::data_local_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("org.tzuchi.poster-admin");
+    std::fs::create_dir_all(&app_data_dir).ok();
+    let db_path = app_data_dir.join("uploads.db");
+    let db = Arc::new(UploadDb::open(&db_path).expect("Failed to open upload database"));
+
+    // One-off migration: reconcile pre-existing `project_files` rows whose
+    // `storage_path` is NULL against the matching `uploads` row (by
+    // project_id + file_path). Fixes projects from before upload.rs learned
+    // to share UUIDs with `create_project`, where the Edit page would show
+    // "尚未上傳" despite the file having been successfully uploaded.
+    match db.repair_orphan_project_files() {
+        Ok(0) => {}
+        Ok(n) => log::info!(
+            "[Migration] repaired {} orphan project_files (back-filled storage_path)",
+            n
+        ),
+        Err(e) => log::warn!("[Migration] repair_orphan_project_files failed: {}", e),
+    }
+
+    let supabase_url = std::env::var("POSTER_SUPABASE_URL")
+        .unwrap_or_else(|_| "https://ptsupabase.tzuchi-org.tw".to_string());
+    let supabase_key = std::env::var("POSTER_SUPABASE_ANON_KEY")
+        .unwrap_or_default();
+
+    // Auth state — shares Supabase config, token shared with upload.
+    // `with_persistence` restores any session written to disk by a previous
+    // run so the user doesn't see a redirect to /login after every Tauri dev
+    // rebuild or app restart. Built first so SupabaseClient can wire the JWT
+    // store in as its authentication source (RLS policies keyed off
+    // `auth.uid()` won't apply to requests made with the anon key alone).
+    let session_path = app_data_dir.join("session.json");
+    let auth_state_inner = auth::AuthState::new(&supabase_url, &supabase_key);
+    let auth_state = Arc::new(
+        tauri::async_runtime::block_on(auth_state_inner.with_persistence(session_path)),
+    );
+
+    let supabase_arc = Arc::new(
+        services::supabase::SupabaseClient::new(&supabase_url, &supabase_key)
+            .with_user_token_store(auth_state.access_token.clone()),
+    );
+
+    // Initialize Immich client
+    let immich_url = std::env::var("IMMICH_URL")
+        .unwrap_or_else(|_| "http://localhost:2283".to_string());
+    let immich_key = std::env::var("IMMICH_API_KEY")
+        .unwrap_or_default();
+    let immich_client = Arc::new(services::immich::ImmichClient::new(&immich_url, &immich_key));
+
+    // Share auth token with upload state so TUS uploads use real OAuth token
+    let upload_state = upload::UploadState {
+        db: db.clone(),
+        semaphore: Arc::new(tokio::sync::Semaphore::new(2)),
+        supabase_url: supabase_url.clone(),
+        supabase_key: supabase_key.clone(),
+        auth_token: auth_state.access_token.clone(),
+        supabase_client: supabase_arc.clone(),
+    };
+    let worker_db = db.clone();
+
+    // Qwenpaw task queue — background worker processes uploaded files
+    let (queue, queue_rx) = TaskQueue::new();
+    let queue_arc = Arc::new(queue);
+    let worker_supabase = supabase_arc.clone();
+    let worker_app_data = app_data_dir.clone();
+
+    let copaw_state = Arc::new(copaw::CoPawState {
+        connected: Arc::new(tokio::sync::RwLock::new(false)),
+        copaw_url: std::env::var("COPAW_WS_URL")
+            .unwrap_or_else(|_| "ws://localhost:8775".to_string()),
+        client_id: format!("poster-admin-{}", uuid::Uuid::new_v4()),
+        tx: Arc::new(tokio::sync::RwLock::new(None)),
+        auth_token: auth_state.access_token.clone(),
+        server_config: Arc::new(tokio::sync::RwLock::new(None)),
+    });
+
+    tauri::Builder::default()
+        .plugin(tauri_plugin_log::Builder::default()
+            .level(log::LevelFilter::Info)
+            .build())
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_http::init())
+        .manage(upload_state)
+        .manage(copaw_state.clone())
+        .manage(auth_state)
+        .manage(queue_arc.clone())
+        .manage(immich_client.clone())
+        .setup(move |app| {
+            // CoPaw WebSocket listener disabled — migrating to in-process QwenPaw agent.
+            let _ = copaw_state;
+
+            let handle = app.handle().clone();
+            let resource_dir = app.path().resource_dir().ok();
+
+            // Start the bundled llama-server sidecar (for local VLM) and then
+            // the Qwenpaw task worker. Sidecar startup can take up to 2 min
+            // while the model warms on Metal; we don't block app launch on it.
+            tauri::async_runtime::spawn(async move {
+                let sidecar = services::qwenpaw::llama_sidecar::start(
+                    resource_dir.as_deref(),
+                    &worker_app_data,
+                )
+                .await;
+                services::qwenpaw::task_queue::run_worker(
+                    handle,
+                    worker_supabase,
+                    worker_db,
+                    sidecar,
+                    queue_rx,
+                )
+                .await;
+            });
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            // Upload
+            upload::upload_files,
+            upload::get_upload_progress,
+            upload::get_resumable_uploads,
+            upload::resume_uploads,
+            // Auth
+            auth::google_login,
+            auth::check_auth,
+            auth::refresh_session,
+            auth::logout,
+            // Profile / Onboarding
+            profile::check_onboarding_status,
+            profile::submit_onboarding,
+            // CoPaw
+            copaw::get_copaw_status,
+            copaw::send_copaw_message,
+            copaw::send_copaw_auth,
+            // Project
+            project::create_project,
+            project::list_projects,
+            project::get_project,
+            project::update_project_status,
+            project::classify_file,
+            project::reprocess_file,
+            project::delete_project,
+            // Review
+            review::submit_project_for_review,
+            review::submit_review,
+            review::update_file_review,
+            review::get_review_history,
+            review::trigger_processing,
+            // Qwenpaw
+            qwenpaw_enqueue,
+            sign_thumbnail_url,
+            // Permission management
+            patch_user_role,
+            // Generic Supabase query
+            query_supabase,
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}
