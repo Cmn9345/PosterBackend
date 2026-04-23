@@ -53,3 +53,14 @@ ON CONFLICT (name) DO UPDATE SET
   sort_order  = EXCLUDED.sort_order,
   is_active   = true,
   updated_at  = NOW();
+
+-- ============================================================
+-- RLS:開放公開讀取(匿名使用者也能撈主題清單;前台 /api/themes 需要)
+-- 若之前表已啟用 RLS 但沒有 policy,讀取會全部被擋。
+-- ============================================================
+ALTER TABLE vocabulary_themes ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "vocabulary_themes public read" ON vocabulary_themes;
+CREATE POLICY "vocabulary_themes public read"
+  ON vocabulary_themes FOR SELECT
+  USING (is_active = true);
