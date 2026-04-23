@@ -23,12 +23,12 @@ Rust 端的寫入邏輯在 `src-tauri/src/services/supabase.rs::update_file_ai_a
 | # | 檔案 | 用途 | 狀態 |
 |---|---|---|---|
 | ~~001~~ | `001_DEPRECATED_*.sql.ref` | 舊設計:加 ai_analysis/metadata JSONB 欄位 | ❌ **勿執行** — 歷史參考,production schema 走另一條路 |
-| 002 | `002_user_sessions.sql` | 登入來源記錄(desktop_app vs web) | ⚠️ 狀態未確認 |
-| 003 | `003_user_profiles.sql` | 志工/同仁 onboarding 資料 | ⚠️ 狀態未確認 |
-| 004 | `004_applications_tables.sql` | `application_posters` / `application_timeline` | ⚠️ 狀態未確認 |
-| 005 | `005_applications_add_columns.sql` | `applications` 加 project_name/theme_id/日期/地點 | ⚠️ 狀態未確認 |
-| **006** | `006_vocabulary_themes.sql` | 主題權威表 + 12 主題 seed | **待套用** |
-| **007** | `007_cleanup_ai_analysis_themes.sql` | 清洗 `poster_files.themes` 裡的 3 個舊字串 | **待套用(有資料才需)** |
+| 002 | `002_user_sessions.sql` | 登入來源記錄(desktop_app vs web) | ✅ 已套用 |
+| 003 | `003_user_profiles.sql` | 志工/同仁 onboarding 資料 | ✅ 已套用(2026-04-23) |
+| 004 | `004_applications_tables.sql` | `application_posters` / `application_timeline` | ✅ 已套用 |
+| 005 | `005_applications_add_columns.sql` | `applications` 加 project_name/theme_id/日期/地點 | ✅ 已套用 |
+| 006 | `006_vocabulary_themes.sql` | 主題權威表 (已存在基本表) + 12 主題 seed | ✅ 已套用(2026-04-23) |
+| 007 | `007_cleanup_ai_analysis_themes.sql` | 清洗 `poster_files.themes` 裡的 3 個舊字串 | 不需跑(無舊資料) |
 
 ### 怎麼確認 002–005 是否已套用
 
