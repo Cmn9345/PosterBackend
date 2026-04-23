@@ -118,10 +118,11 @@ pub async fn analyze(base_url: &str, image_bytes: &[u8], prompt: &str) -> Result
             ],
         }],
         temperature: 0.1,
-        // 即使 OCR 在 prompt 層已被 cap 到 600 字,超密集海報 + schema 其他欄位
-        // 還是要留夠空間。實測 GMI Cloud 宣傳頁(8KB 中文 OCR)需要 8K tokens
-        // 才能吐完整 JSON;-c 16384 context 放得下。
-        max_tokens: 8192,
+        // Qwen2-VL 2B 即使 OCR 被 cap 到 600 字,description / suggestions
+        // 仍會跑 500+ 字。實測最大 JSON 可到 ~30KB(column 27283)。拉到
+        // 12288 搭配 try_close_truncated_json 幾乎能救回所有 payload。
+        // -c 16384 context 放得下。
+        max_tokens: 12288,
         stream: false,
         response_format: ResponseFormat { kind: "json_object" },
     };
@@ -175,6 +176,17 @@ pub async fn analyze(base_url: &str, image_bytes: &[u8], prompt: &str) -> Result
     match serde_json::from_str::<Value>(cleaned) {
         Ok(v) => Ok(v),
         Err(e) => {
+            // Qwen2-VL 2B 偶爾會被 max_tokens 切在 description / suggestions
+            // 字串中間,導致 JSON 未閉合。試著補上遺漏的 `"` / `}` / `]` 讓
+            // parser 吃下已產生的欄位,使用者至少拿到 OCR + themes 等前段。
+            let patched = try_close_truncated_json(cleaned);
+            if let Ok(v) = serde_json::from_str::<Value>(&patched) {
+                warn!(
+                    "[VLM] JSON truncated at {} bytes, salvaged partial fields",
+                    cleaned.len()
+                );
+                return Ok(v);
+            }
             warn!(
                 "[VLM] non-JSON response despite json_object mode: {} — raw={:?}",
                 e,
@@ -186,4 +198,58 @@ pub async fn analyze(base_url: &str, image_bytes: &[u8], prompt: &str) -> Result
             }))
         }
     }
+}
+
+/// 把被 max_tokens 截斷的 JSON 盡量補成可解析字串:若最後還在字串裡,補一個
+/// 雙引號;接著補上所有未閉合的 `}` / `]`。這樣 parser 能吃到已產生的欄位,
+/// 最後幾個(通常是 suggestions / scores)欄位會缺失但其他欄位保留。
+fn try_close_truncated_json(s: &str) -> String {
+    let mut in_string = false;
+    let mut escape = false;
+    let mut stack: Vec<char> = Vec::new(); // '{' or '['
+
+    for c in s.chars() {
+        if escape {
+            escape = false;
+            continue;
+        }
+        if in_string {
+            match c {
+                '\\' => escape = true,
+                '"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match c {
+            '"' => in_string = true,
+            '{' => stack.push('{'),
+            '}' => {
+                let _ = stack.pop();
+            }
+            '[' => stack.push('['),
+            ']' => {
+                let _ = stack.pop();
+            }
+            _ => {}
+        }
+    }
+
+    let mut fixed = s.to_string();
+    if in_string {
+        fixed.push('"');
+    }
+    // 補尾隨的逗號後的空屬性:若截斷點在 key 後的逗號,可能產生 `...,` 結尾,
+    // serde_json 不吃尾逗號 — 簡單處理:把結尾連續的 `,\n` 刮掉。
+    while let Some(last) = fixed.chars().last() {
+        if last == ',' || last.is_whitespace() {
+            fixed.pop();
+        } else {
+            break;
+        }
+    }
+    while let Some(open) = stack.pop() {
+        fixed.push(if open == '{' { '}' } else { ']' });
+    }
+    fixed
 }
