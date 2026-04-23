@@ -4,7 +4,13 @@ import { invoke } from "@tauri-apps/api/core";
 import { ChevronLeft, Save, FileIcon, Loader2, Sparkles, FileText, Send, Check, RefreshCw, RotateCcw } from "lucide-react";
 import { useQwenpawProgress } from "../../hooks/useQwenpawProgress";
 import { ProjectProgressPanel } from "../../components/ProjectProgressPanel";
-import { supabase } from "../../lib/supabase";
+
+// 直接拼 Supabase Storage public URL,避免 supabase-js 在 Vite env 沒設時
+// createClient() 就丟 "supabaseKey is required" 把整頁炸白。
+const SUPABASE_URL =
+  (import.meta as unknown as { env: Record<string, string> }).env
+    .VITE_POSTER_SUPABASE_URL || "https://ptsupabase.tzuchi-org.tw";
+const THUMBNAIL_PUBLIC_URL_PREFIX = `${SUPABASE_URL}/storage/v1/object/public/poster-thumbnails`;
 
 export const Route = createFileRoute("/posters/$projectId/edit")({
   component: EditProject,
@@ -650,9 +656,7 @@ function EditProject() {
               const ai = tryParse<AiAnalysis>(f.ai_analysis);
               const tech = tryParse<FileTechMeta>(f.metadata_json);
               const thumbUrl = f.thumbnail_path
-                ? supabase.storage
-                    .from("poster-thumbnails")
-                    .getPublicUrl(f.thumbnail_path).data.publicUrl
+                ? `${THUMBNAIL_PUBLIC_URL_PREFIX}/${f.thumbnail_path}`
                 : null;
               return (
                 <div
