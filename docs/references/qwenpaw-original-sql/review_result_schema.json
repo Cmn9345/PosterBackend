@@ -1,0 +1,68 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ReviewResult",
+  "description": "志工審核後最終結果，下游系統唯一真相欄位（desktop_team + cloud_team 共用）",
+  "type": "object",
+  "required": ["task_type", "version", "reviewed"],
+  "properties": {
+    "task_type": {
+      "type": "string",
+      "enum": ["vlm", "stt", "embedding"],
+      "description": "任務類型"
+    },
+    "processing_engine": {
+      "type": "string",
+      "enum": ["cloud", "local_webgpu"],
+      "description": "處理引擎"
+    },
+    "scores": {
+      "type": "object",
+      "description": "五維評分（VLM 圖片分析用）",
+      "properties": {
+        "composition":     { "type": "integer", "minimum": 0, "maximum": 100, "description": "構圖" },
+        "lighting":        { "type": "integer", "minimum": 0, "maximum": 100, "description": "光影" },
+        "clarity":         { "type": "integer", "minimum": 0, "maximum": 100, "description": "清晰度" },
+        "narrative":       { "type": "integer", "minimum": 0, "maximum": 100, "description": "敘事性" },
+        "event_relevance": { "type": "integer", "minimum": 0, "maximum": 100, "description": "事件符合度" },
+        "total":           { "type": "integer", "minimum": 0, "maximum": 100, "description": "總分" },
+        "recommendation":  { "type": "string", "description": "建議分類（推薦收藏/合格/待改善/不合格）" }
+      },
+      "required": ["composition", "lighting", "clarity", "narrative", "event_relevance", "total"]
+    },
+    "feedback": {
+      "type": "object",
+      "description": "專業評分理由",
+      "properties": {
+        "composition":     { "type": "string", "description": "構圖評語" },
+        "lighting":        { "type": "string", "description": "光影評語" },
+        "clarity":         { "type": "string", "description": "清晰度評語" },
+        "narrative":       { "type": "string", "description": "敘事性評語" },
+        "event_relevance": { "type": "string", "description": "事件符合度評語" },
+        "special_bonus":   { "type": "string", "description": "特殊情境加分理由" }
+      }
+    },
+    "caption": {
+      "type": "string",
+      "description": "圖說文字"
+    },
+    "volunteer_notes": {
+      "type": "string",
+      "description": "志工審核備註（選填）"
+    },
+    "reviewed": {
+      "type": "boolean",
+      "description": "是否經志工人工審核確認"
+    },
+    "version": {
+      "type": "string",
+      "description": "Schema 版本號",
+      "enum": ["1.0"]
+    }
+  },
+  "if": {
+    "properties": { "task_type": { "const": "vlm" } }
+  },
+  "then": {
+    "required": ["scores", "caption"]
+  }
+}

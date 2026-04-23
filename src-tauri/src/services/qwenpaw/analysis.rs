@@ -24,7 +24,7 @@ const VLM_MAX_EDGE: u32 = 1536;
 const VLM_JPEG_QUALITY: u8 = 88;
 
 const THEME_LIST: &str =
-    "環保、慈善、醫療、教育、人文、國際賑災、骨髓捐贈、歲末祝福、浴佛節";
+    "朔源、慈善、醫療、教育、人文、環保、茹素護生、國際賑災、靜思語、大事記、法華坡道、年度主題";
 
 pub fn build_prompt() -> String {
     format!(

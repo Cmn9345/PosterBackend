@@ -34,15 +34,18 @@ interface SelectedFile {
 }
 
 const themes = [
-  { name: "環保", color: "bg-emerald-100" },
-  { name: "慈善", color: "bg-amber-100" },
+  { name: "朔源", color: "bg-stone-100" },
+  { name: "慈善", color: "bg-red-100" },
   { name: "醫療", color: "bg-blue-100" },
-  { name: "教育", color: "bg-purple-100" },
-  { name: "人文", color: "bg-rose-100" },
+  { name: "教育", color: "bg-yellow-100" },
+  { name: "人文", color: "bg-purple-100" },
+  { name: "環保", color: "bg-green-100" },
+  { name: "茹素護生", color: "bg-lime-100" },
   { name: "國際賑災", color: "bg-sky-100" },
-  { name: "骨髓捐贈", color: "bg-teal-100" },
-  { name: "歲末祝福", color: "bg-indigo-100" },
-  { name: "浴佛節", color: "bg-orange-100" },
+  { name: "靜思語", color: "bg-cyan-100" },
+  { name: "大事記", color: "bg-orange-100" },
+  { name: "法華坡道", color: "bg-violet-100" },
+  { name: "年度主題", color: "bg-pink-100" },
 ];
 
 const steps = [
