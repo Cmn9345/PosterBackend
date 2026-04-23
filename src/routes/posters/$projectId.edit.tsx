@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { ChevronLeft, Save, FileIcon, Loader2, Sparkles, FileText, Send, Check, RefreshCw, RotateCcw } from "lucide-react";
 import { useQwenpawProgress } from "../../hooks/useQwenpawProgress";
 import { ProjectProgressPanel } from "../../components/ProjectProgressPanel";
+import { supabase } from "../../lib/supabase";
 
 export const Route = createFileRoute("/posters/$projectId/edit")({
   component: EditProject,
@@ -31,6 +32,8 @@ interface ProjectFile {
   processing_status: string;
   /** Set once the original has been uploaded to Supabase Storage. */
   storage_path: string | null;
+  /** Set after Qwenpaw pipeline writes M-size WebP to poster-thumbnails bucket. */
+  thumbnail_path: string | null;
   metadata_json: string | null;
   ai_analysis: string | null;
 }
@@ -439,6 +442,17 @@ function EditProject() {
       refresh({ preserveEdits: true }).catch(() => {
         /* refresh surfaces its own error state */
       });
+      // Rust flips project status to "draft" AFTER persisting the last file,
+      // which can race against this refresh. Do a follow-up read ~1s later so
+      // the "inPipeline" gate drops and the edit form takes over the screen.
+      const entries = Object.values(scopedProgress);
+      const allCompleted =
+        entries.length > 0 && entries.every((e) => e.stage === "completed");
+      if (allCompleted) {
+        setTimeout(() => {
+          refresh({ preserveEdits: true }).catch(() => {});
+        }, 1200);
+      }
     }
   }, [scopedProgress, refresh]);
 
@@ -635,6 +649,11 @@ function EditProject() {
               const meta = fileEdits[f.id] ?? {};
               const ai = tryParse<AiAnalysis>(f.ai_analysis);
               const tech = tryParse<FileTechMeta>(f.metadata_json);
+              const thumbUrl = f.thumbnail_path
+                ? supabase.storage
+                    .from("poster-thumbnails")
+                    .getPublicUrl(f.thumbnail_path).data.publicUrl
+                : null;
               return (
                 <div
                   key={f.id}
@@ -642,9 +661,22 @@ function EditProject() {
                 >
                   {/* File header */}
                   <div className="flex items-center gap-3 mb-3">
-                    <div className="w-9 h-9 bg-primary/10 rounded-lg flex items-center justify-center shrink-0">
-                      <FileIcon className="w-4 h-4 text-primary" />
-                    </div>
+                    {thumbUrl ? (
+                      <img
+                        src={thumbUrl}
+                        alt={f.file_name}
+                        className="w-14 h-14 rounded-lg object-cover shrink-0 border border-gray-200 bg-gray-50"
+                        loading="lazy"
+                        onError={(e) => {
+                          (e.currentTarget as HTMLImageElement).style.display =
+                            "none";
+                        }}
+                      />
+                    ) : (
+                      <div className="w-14 h-14 bg-primary/10 rounded-lg flex items-center justify-center shrink-0">
+                        <FileIcon className="w-5 h-5 text-primary" />
+                      </div>
+                    )}
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-gray-900 truncate">
                         {f.file_name}

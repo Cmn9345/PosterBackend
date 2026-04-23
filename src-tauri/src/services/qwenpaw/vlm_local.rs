@@ -118,9 +118,11 @@ pub async fn analyze(base_url: &str, image_bytes: &[u8], prompt: &str) -> Result
             ],
         }],
         temperature: 0.1,
-        // 300 字中文 description + OCR（可能 200+ 字）+ 其他欄位 ≈ 1500 tokens。
-        // 加緩衝避免 JSON 被切斷。
-        max_tokens: 2048,
+        // OCR 逐字抄錄可能上千字(3000+ tokens),加上 description / themes /
+        // scores / suggestions 等欄位。2048 在高密度海報會把 JSON 截斷在 OCR
+        // 中途導致 parse_error;6144 給大部分海報足夠空間,context window
+        // -c 16384 也放得下。
+        max_tokens: 6144,
         stream: false,
         response_format: ResponseFormat { kind: "json_object" },
     };
