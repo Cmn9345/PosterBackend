@@ -334,10 +334,14 @@ function EditProject() {
         fileId,
       });
       setToast("已重新送出處理，請稍候…");
-      // Poll the project a couple of times so the status chip updates
-      // without the user having to click around.
-      for (let i = 0; i < 12; i++) {
-        await new Promise((r) => setTimeout(r, 2500));
+      // Poll until Rust flips the WHOLE project back out of "processing"
+      // (task_queue::update_project_status does this only AFTER persisting the
+      // last file). Previously we broke as soon as the FILE hit "completed",
+      // which stopped polling before the status flip landed → UI stayed on
+      // the processing panel. Keep polling a bit more even after file is done.
+      let sawFileCompleted = false;
+      for (let i = 0; i < 16; i++) {
+        await new Promise((r) => setTimeout(r, 2000));
         try {
           const [proj, fileList] = await invoke<
             [Project, ProjectFile[]]
@@ -345,7 +349,10 @@ function EditProject() {
           setProject(proj);
           setFiles(fileList);
           const target = fileList.find((f) => f.id === fileId);
-          if (target?.processing_status === "completed") break;
+          if (target?.processing_status === "completed") sawFileCompleted = true;
+          const projDone =
+            proj.status !== "processing" && proj.status !== "uploading";
+          if (sawFileCompleted && projDone) break;
         } catch {
           /* ignore, keep polling */
         }

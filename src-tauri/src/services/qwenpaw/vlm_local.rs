@@ -118,11 +118,10 @@ pub async fn analyze(base_url: &str, image_bytes: &[u8], prompt: &str) -> Result
             ],
         }],
         temperature: 0.1,
-        // OCR 逐字抄錄可能上千字(3000+ tokens),加上 description / themes /
-        // scores / suggestions 等欄位。2048 在高密度海報會把 JSON 截斷在 OCR
-        // 中途導致 parse_error;6144 給大部分海報足夠空間,context window
-        // -c 16384 也放得下。
-        max_tokens: 6144,
+        // 即使 OCR 在 prompt 層已被 cap 到 600 字,超密集海報 + schema 其他欄位
+        // 還是要留夠空間。實測 GMI Cloud 宣傳頁(8KB 中文 OCR)需要 8K tokens
+        // 才能吐完整 JSON;-c 16384 context 放得下。
+        max_tokens: 8192,
         stream: false,
         response_format: ResponseFormat { kind: "json_object" },
     };
