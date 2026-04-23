@@ -1,5 +1,5 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState, useCallback } from "react";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { useState, useCallback, useEffect, useRef } from "react";
 import {
   ChevronRight,
   CloudUpload,
@@ -88,8 +88,11 @@ function formatSpeed(bps: number | null): string {
 //  reused by the Edit page to show live progress when a project is still processing.)
 
 function UploadWizard() {
+  const navigate = useNavigate();
   const [step, setStep] = useState<Step>(1);
   const [showResumeAlert, setShowResumeAlert] = useState(true);
+  // Fire-once guard so a re-render after navigation doesn't spam navigate().
+  const autoRedirectedRef = useRef(false);
 
   // Step 1 form state
   const [projectName, setProjectName] = useState("");
@@ -797,6 +800,23 @@ function UploadWizard() {
         const allComplete =
           Object.values(qwenpawProgress).length > 0 &&
           Object.values(qwenpawProgress).every((p) => p.stage === "completed");
+
+        // Auto-redirect to the edit page as soon as all files finish pipeline,
+        // so the user never has to click "前往編輯" manually. The guard prevents
+        // re-fires on subsequent renders once redirected.
+        if (
+          allComplete &&
+          createdProjectId &&
+          !autoRedirectedRef.current
+        ) {
+          autoRedirectedRef.current = true;
+          setTimeout(() => {
+            navigate({
+              to: "/posters/$projectId/edit",
+              params: { projectId: createdProjectId },
+            });
+          }, 400);
+        }
         const reset = () => {
           setStep(1);
           setShowResumeAlert(true);
@@ -811,6 +831,7 @@ function UploadWizard() {
           setSelectedThemes(new Set());
           setCreatedProjectId(null);
           setUploadError(null);
+          autoRedirectedRef.current = false;
         };
         return (
           <ProjectProgressPanel
@@ -823,8 +844,8 @@ function UploadWizard() {
                 <p className="font-medium mb-1">處理完成後會做什麼？</p>
                 <ul className="list-disc pl-5 space-y-0.5 text-blue-800">
                   <li>每個檔案依序跑：下載 → 中繼資料 (EXIF/W×H/DPI) → 縮圖 → AI 分析 (OCR + 圖說)</li>
-                  <li>完成後海報狀態會變為「待審核」，可至「上架審核」頁面做核可 / 駁回</li>
-                  <li>核可後會自動同步到 Immich 並對前台志工開放</li>
+                  <li>完成後會自動跳到編輯頁面，讓你檢視 AI 結果、補充欄位</li>
+                  <li>確認內容後在編輯頁點「提交審核」，送給審核人員做核可 / 駁回</li>
                 </ul>
               </div>
             }
@@ -836,16 +857,19 @@ function UploadWizard() {
                 >
                   返回海報列表
                 </Link>
-                <Link
-                  to="/poster-reviews"
-                  className={`px-5 py-2.5 text-sm font-medium rounded-lg transition-colors ${
-                    allComplete
-                      ? "bg-emerald-600 text-white hover:bg-emerald-700"
-                      : "bg-gray-100 text-gray-500 pointer-events-none"
-                  }`}
-                >
-                  {allComplete ? "前往上架審核 →" : "等待處理完成…"}
-                </Link>
+                {createdProjectId ? (
+                  <Link
+                    to="/posters/$projectId/edit"
+                    params={{ projectId: createdProjectId }}
+                    className={`px-5 py-2.5 text-sm font-medium rounded-lg transition-colors ${
+                      allComplete
+                        ? "bg-emerald-600 text-white hover:bg-emerald-700"
+                        : "bg-gray-100 text-gray-500 pointer-events-none"
+                    }`}
+                  >
+                    {allComplete ? "前往編輯頁面 →" : "等待處理完成…"}
+                  </Link>
+                ) : null}
                 <button
                   onClick={reset}
                   className="px-5 py-2.5 text-sm font-medium text-white bg-primary rounded-lg hover:bg-primary-light transition-colors cursor-pointer"
