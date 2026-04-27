@@ -11,6 +11,8 @@ import {
   Sparkles,
   FileText,
   Image as ImageIcon,
+  Star,
+  Lightbulb,
 } from "lucide-react";
 import { querySupabase } from "../../lib/api";
 
@@ -49,7 +51,31 @@ interface FileRow {
   access_level: string | null;
   immich_asset_id: string | null;
   immich_sync_status: string | null;
+  /** Full VLM result JSONB — includes 5-dimension `scores` + `suggestions`
+   *  used by the rating section below. */
+  ai_analysis: AiAnalysis | null;
 }
+
+interface AiScores {
+  composition?: number | null;
+  clarity?: number | null;
+  design_quality?: number | null;
+  content_completeness?: number | null;
+  typography?: number | null;
+}
+
+interface AiAnalysis {
+  scores?: AiScores | null;
+  suggestions?: string | null;
+}
+
+const SCORE_DIMENSIONS: { key: keyof AiScores; label: string }[] = [
+  { key: "composition", label: "構圖" },
+  { key: "clarity", label: "易讀性" },
+  { key: "design_quality", label: "設計品質" },
+  { key: "content_completeness", label: "資訊完整" },
+  { key: "typography", label: "字體排版" },
+];
 
 /* ------------------------------------------------------------------ */
 /*  Page                                                               */
@@ -389,10 +415,108 @@ function FileReviewCard({ file }: { file: FileRow }) {
               </p>
             )}
           </section>
+
+          <ScoreSection ai={file.ai_analysis} />
         </div>
       </div>
     </article>
   );
+}
+
+/* ------------------------------------------------------------------ */
+/*  AI 品質評分                                                         */
+/* ------------------------------------------------------------------ */
+
+function ScoreSection({ ai }: { ai: AiAnalysis | null }) {
+  const scores = ai?.scores ?? null;
+  const present = scores
+    ? SCORE_DIMENSIONS.filter((d) => typeof scores[d.key] === "number")
+    : [];
+  if (present.length === 0 && !ai?.suggestions) return null;
+
+  const avg =
+    present.length > 0
+      ? Math.round(
+          present.reduce((sum, d) => sum + (scores![d.key] as number), 0) /
+            present.length,
+        )
+      : null;
+
+  return (
+    <section>
+      <SectionTitle icon={<Star className="w-4 h-4" />}>
+        AI 品質評分
+        {avg != null && (
+          <span
+            className={`ml-2 text-[11px] font-semibold normal-case tracking-normal ${tierColor(
+              avg,
+            )}`}
+          >
+            平均 {avg} / 100 · {tierLabel(avg)}
+          </span>
+        )}
+      </SectionTitle>
+
+      {present.length > 0 && (
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+          {present.map((d) => (
+            <ScoreRow
+              key={d.key}
+              label={d.label}
+              value={scores![d.key] as number}
+            />
+          ))}
+        </div>
+      )}
+
+      {ai?.suggestions && (
+        <p className="mt-2 flex items-start gap-1.5 text-xs text-gray-600 bg-amber-50/50 border border-amber-100 rounded px-2 py-1.5">
+          <Lightbulb className="w-3.5 h-3.5 mt-0.5 text-amber-600 shrink-0" />
+          <span className="leading-relaxed">{ai.suggestions}</span>
+        </p>
+      )}
+    </section>
+  );
+}
+
+function ScoreRow({ label, value }: { label: string; value: number }) {
+  const clamped = Math.max(0, Math.min(100, value));
+  const color = tierBar(clamped);
+  return (
+    <div className="flex items-center gap-2 text-xs">
+      <span className="w-16 shrink-0 text-gray-500">{label}</span>
+      <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+        <div
+          className={`h-full ${color} rounded-full`}
+          style={{ width: `${clamped}%` }}
+        />
+      </div>
+      <span className={`w-7 text-right tabular-nums ${tierColor(clamped)}`}>
+        {clamped}
+      </span>
+    </div>
+  );
+}
+
+function tierColor(v: number): string {
+  if (v >= 85) return "text-emerald-600";
+  if (v >= 70) return "text-blue-600";
+  if (v >= 55) return "text-amber-600";
+  return "text-red-600";
+}
+
+function tierBar(v: number): string {
+  if (v >= 85) return "bg-emerald-500";
+  if (v >= 70) return "bg-blue-500";
+  if (v >= 55) return "bg-amber-500";
+  return "bg-red-500";
+}
+
+function tierLabel(v: number): string {
+  if (v >= 85) return "優秀";
+  if (v >= 70) return "良好";
+  if (v >= 55) return "尚可";
+  return "需改善";
 }
 
 /* ------------------------------------------------------------------ */
