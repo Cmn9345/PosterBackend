@@ -542,11 +542,31 @@ async fn ensure_public_user_row(
     }
 }
 
-/// Refresh the Supabase session using refresh_token
-#[command]
-pub async fn refresh_session(
-    auth: tauri::State<'_, Arc<AuthState>>,
-) -> Result<AuthResult, String> {
+/// Decode the `exp` claim from a JWT without verifying its signature.
+/// Returns `None` for tokens we can't parse — callers treat that the same as
+/// an expired token (force re-auth) rather than risk handing a stale JWT to
+/// Supabase Storage / PostgREST and getting a 401 mid-upload.
+fn jwt_exp_seconds(token: &str) -> Option<i64> {
+    let payload_b64 = token.split('.').nth(1)?;
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload_b64)
+        .ok()?;
+    serde_json::from_slice::<serde_json::Value>(&bytes)
+        .ok()?
+        .get("exp")?
+        .as_i64()
+}
+
+fn jwt_is_expiring(token: &str, leeway_secs: i64) -> bool {
+    match jwt_exp_seconds(token) {
+        Some(exp) => chrono::Utc::now().timestamp() + leeway_secs >= exp,
+        None => true,
+    }
+}
+
+/// Refresh body factored out so `check_auth` can reuse it without going
+/// through the Tauri command machinery (which would deadlock the State guard).
+async fn perform_refresh_inner(auth: &Arc<AuthState>) -> Result<AuthResult, String> {
     let refresh_token = auth.refresh_token.read().await.clone();
     let refresh_token = refresh_token.ok_or("No refresh token available")?;
 
@@ -616,21 +636,50 @@ pub async fn refresh_session(
     })
 }
 
-/// Check if user is authenticated
+/// Refresh the Supabase session using refresh_token
+#[command]
+pub async fn refresh_session(
+    auth: tauri::State<'_, Arc<AuthState>>,
+) -> Result<AuthResult, String> {
+    perform_refresh_inner(auth.inner()).await
+}
+
+/// Check if user is authenticated. If the cached access token is expired (or
+/// will be within 60s), proactively refresh before answering — otherwise the
+/// frontend treats us as logged-in but every Supabase call returns 401
+/// (`"exp" claim timestamp check failed`), which the user sees as "卡住".
 #[command]
 pub async fn check_auth(
     auth: tauri::State<'_, Arc<AuthState>>,
 ) -> Result<AuthResult, String> {
-    let user = auth.user.read().await;
-    let token = auth.access_token.read().await;
+    let user = auth.user.read().await.clone();
+    let token = auth.access_token.read().await.clone();
+    let has_refresh = auth.refresh_token.read().await.is_some();
 
-    match (user.as_ref(), token.as_ref()) {
-        (Some(u), Some(t)) => Ok(AuthResult {
-            success: true,
-            user: Some(u.clone()),
-            token: Some(t.clone()),
-            error: None,
-        }),
+    match (user, token) {
+        (Some(u), Some(t)) => {
+            if jwt_is_expiring(&t, 60) && has_refresh {
+                info!("[Auth] check_auth: access token expired/expiring, refreshing");
+                return match perform_refresh_inner(auth.inner()).await {
+                    Ok(res) => Ok(res),
+                    Err(e) => {
+                        warn!("[Auth] auto-refresh failed: {}", e);
+                        Ok(AuthResult {
+                            success: false,
+                            user: None,
+                            token: None,
+                            error: Some(e),
+                        })
+                    }
+                };
+            }
+            Ok(AuthResult {
+                success: true,
+                user: Some(u),
+                token: Some(t),
+                error: None,
+            })
+        }
         _ => Ok(AuthResult {
             success: false,
             user: None,
