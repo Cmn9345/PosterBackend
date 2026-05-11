@@ -1,545 +1,176 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { ChevronRight, Folder, FileText, Plus, Loader2 } from "lucide-react";
-import { useState, useCallback, useEffect } from "react";
-import { querySupabase } from "../lib/api";
+import { Plus, Search, ImageIcon, Loader2, Trash2 } from "lucide-react";
+import { useState, useEffect, useMemo, useCallback } from "react";
+import {
+  querySupabase,
+  createExhibition,
+  patchExhibition,
+  deleteExhibition,
+  type ExhibitionInput,
+  type ExhibitionStatus,
+} from "../lib/api";
 
 export const Route = createFileRoute("/exhibition-structure")({
-  component: ExhibitionStructure,
+  component: ExhibitionManagement,
 });
 
-// ---------------------------------------------------------------------------
-// Types & Data
-// ---------------------------------------------------------------------------
-
-interface TreeNode {
+// 對應 production schema：public.exhibitions
+interface Exhibition {
   id: string;
   name: string;
-  posterCount: number;
-  children?: TreeNode[];
-}
-
-// TODO: The exhibition_structure table likely returns flat rows with parent_id.
-// The query needed is: select=id,name,parent_id,description,sort_order,poster_count,enabled
-// Once the actual schema is confirmed, replace the mock tree-building logic below.
-
-interface ExhibitionStructureRow {
-  id: string;
-  name: string;
-  parent_id: string | null;
-  description?: string;
+  description: string | null;
+  cover_image_path: string | null;
+  status: ExhibitionStatus;
   sort_order: number;
-  poster_count?: number;
-  enabled?: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
-/** Build a tree from flat rows with parent_id */
-function buildTree(rows: ExhibitionStructureRow[]): TreeNode[] {
-  const nodeMap = new Map<string, TreeNode>();
-  const roots: TreeNode[] = [];
+type ModalMode =
+  | { kind: "closed" }
+  | { kind: "create" }
+  | { kind: "edit"; exhibition: Exhibition };
 
-  for (const row of rows) {
-    nodeMap.set(row.id, {
-      id: row.id,
-      name: row.name,
-      posterCount: row.poster_count ?? 0,
-      children: [],
-    });
-  }
-
-  for (const row of rows) {
-    const node = nodeMap.get(row.id)!;
-    if (row.parent_id && nodeMap.has(row.parent_id)) {
-      nodeMap.get(row.parent_id)!.children!.push(node);
-    } else {
-      roots.push(node);
-    }
-  }
-
-  // Remove empty children arrays for leaf nodes
-  for (const node of nodeMap.values()) {
-    if (node.children && node.children.length === 0) {
-      delete node.children;
-    }
-  }
-
-  return roots;
-}
-
-/** Fallback mock data used when no real data is available */
-const fallbackTreeData: TreeNode[] = [
-  {
-    id: "1",
-    name: "歲末祝福 2026",
-    posterCount: 12,
-    children: [
-      {
-        id: "1-1",
-        name: "主展區 - 靜思堂大廳",
-        posterCount: 5,
-        children: [
-          { id: "1-1-1", name: "入口意象", posterCount: 2 },
-          { id: "1-1-2", name: "歷史回顧", posterCount: 3 },
-        ],
-      },
-      { id: "1-2", name: "展區 - 感恩廳", posterCount: 4 },
-      { id: "1-3", name: "展區 - 戶外廣場", posterCount: 3 },
-    ],
+// 三種狀態的中文標籤 + 顏色配置
+const statusMeta: Record<
+  ExhibitionStatus,
+  { label: string; pillCls: string; cardTint: string }
+> = {
+  planning: {
+    label: "籌備中",
+    pillCls: "bg-amber-100 text-amber-700",
+    cardTint: "bg-amber-50",
   },
-  {
-    id: "2",
-    name: "浴佛節 2026",
-    posterCount: 8,
-    children: [
-      { id: "2-1", name: "主舞台背板", posterCount: 3 },
-      { id: "2-2", name: "會場動線", posterCount: 5 },
-    ],
+  ongoing: {
+    label: "進行中",
+    pillCls: "bg-green-100 text-green-700",
+    cardTint: "bg-green-50",
   },
-  {
-    id: "3",
-    name: "國際賑災攝影展",
-    posterCount: 6,
-    children: [
-      { id: "3-1", name: "土耳其專區", posterCount: 3 },
-      { id: "3-2", name: "敘利亞專區", posterCount: 3 },
-    ],
+  finished: {
+    label: "已結束",
+    pillCls: "bg-gray-200 text-gray-600",
+    cardTint: "bg-gray-100",
   },
-  { id: "4", name: "環保推廣常設展", posterCount: 4 },
-];
-
-/** Sample poster data per selected node */
-interface PosterThumb {
-  label: string;
-  name: string;
-  gradient: string;
-  textColor: string;
-}
-
-const postersByNode: Record<string, PosterThumb[]> = {
-  "1-1": [
-    { label: "環保海報", name: "慈濟環保海報 A0", gradient: "from-emerald-50 to-emerald-100", textColor: "text-emerald-400" },
-    { label: "歲末祝福", name: "歲末祝福主視覺", gradient: "from-amber-50 to-amber-100", textColor: "text-amber-400" },
-    { label: "年度回顧", name: "2025年度回顧展板", gradient: "from-blue-50 to-blue-100", textColor: "text-blue-400" },
-    { label: "感恩海報", name: "感恩節海報設計", gradient: "from-violet-50 to-violet-100", textColor: "text-violet-400" },
-    { label: "靜思語", name: "靜思語海報", gradient: "from-rose-50 to-rose-100", textColor: "text-rose-400" },
-  ],
 };
 
-// Store description/row data for detail panel
-let descriptionMap: Record<string, string> = {};
-let rowDataMap: Record<string, ExhibitionStructureRow> = {};
+const statusOrder: ExhibitionStatus[] = ["planning", "ongoing", "finished"];
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/** Find a node by id and return [node, path] where path is ancestor names. */
-function findNodeWithPath(
-  nodes: TreeNode[],
-  targetId: string,
-  ancestors: string[] = [],
-): { node: TreeNode; path: string[] } | null {
-  for (const n of nodes) {
-    if (n.id === targetId) return { node: n, path: ancestors };
-    if (n.children) {
-      const found = findNodeWithPath(n.children, targetId, [...ancestors, n.name]);
-      if (found) return found;
-    }
+/** Surface PostgREST errors as a human-readable Chinese message. */
+function formatMutationError(err: unknown): string {
+  const raw = String(err ?? "");
+  if (raw.includes("22P02") || (raw.includes("invalid input value for enum"))) {
+    return "狀態不正確（只能是 籌備中 / 進行中 / 已結束）";
   }
-  return null;
-}
-
-/** Compute the depth (0-based) of a node in the tree. */
-function getNodeDepth(nodes: TreeNode[], targetId: string, depth = 0): number {
-  for (const n of nodes) {
-    if (n.id === targetId) return depth;
-    if (n.children) {
-      const d = getNodeDepth(n.children, targetId, depth + 1);
-      if (d >= 0) return d;
-    }
+  if (raw.includes("permission denied") || raw.includes("row-level security") || raw.includes("42501")) {
+    return "權限不足：只有系統管理員可以建立 / 編輯 / 刪除展覽";
   }
-  return -1;
+  if (raw.includes("PGRST") || (raw.includes("relation") && raw.includes("does not exist"))) {
+    return "資料表存取失敗，請確認 009 migration 是否已套用";
+  }
+  return raw || "未知錯誤";
 }
 
-const levelLabels = ["展覽", "展區", "子區"];
-
-function getLevelBadge(depth: number): string {
-  const label = levelLabels[depth] ?? "項目";
-  return `第${depth === 0 ? "一" : depth === 1 ? "二" : "三"}層 · ${label}`;
-}
-
-// ---------------------------------------------------------------------------
-// Tree Node Component
-// ---------------------------------------------------------------------------
-
-function TreeNodeComponent({
-  node,
-  level,
-  expandedNodes,
-  selectedId,
-  onToggle,
-  onSelect,
-}: {
-  node: TreeNode;
-  level: number;
-  expandedNodes: Set<string>;
-  selectedId: string | null;
-  onToggle: (id: string) => void;
-  onSelect: (id: string) => void;
-}) {
-  const hasChildren = node.children && node.children.length > 0;
-  const isExpanded = expandedNodes.has(node.id);
-  const isSelected = selectedId === node.id;
-  const isTopLevel = level === 0;
-
-  return (
-    <div>
-      {/* Row */}
-      <div
-        onClick={() => onSelect(node.id)}
-        className={`group flex items-center gap-2 py-2 px-3 rounded-lg cursor-pointer transition-colors ${
-          isSelected
-            ? "bg-[#F0F5FF] border-l-[3px] border-primary"
-            : "hover:bg-gray-50"
-        }`}
-        style={{ paddingLeft: `${12 + level * 24}px` }}
-      >
-        {/* Expand/collapse chevron */}
-        {hasChildren ? (
-          <button
-            className="w-5 h-5 flex items-center justify-center text-gray-400 hover:text-gray-600 shrink-0"
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggle(node.id);
-            }}
-          >
-            <ChevronRight
-              className={`w-4 h-4 transition-transform duration-150 ${
-                isExpanded ? "rotate-90" : ""
-              }`}
-            />
-          </button>
-        ) : (
-          <span className="w-5 shrink-0" />
-        )}
-
-        {/* Icon */}
-        {hasChildren ? (
-          <Folder className="w-4 h-4 text-gray-400 shrink-0" />
-        ) : (
-          <FileText className="w-4 h-4 text-gray-400 shrink-0" />
-        )}
-
-        {/* Name */}
-        <span
-          className={`text-sm flex-1 truncate ${
-            isTopLevel ? "font-medium text-gray-700" : "text-gray-600"
-          }`}
-        >
-          {node.name}
-        </span>
-
-        {/* Count badge */}
-        <span className="text-xs text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">
-          {node.posterCount}
-        </span>
-
-        {/* Add child button (hover) */}
-        {hasChildren && (
-          <button
-            className="w-5 h-5 items-center justify-center text-gray-300 hover:text-primary hidden group-hover:flex shrink-0"
-            onClick={(e) => {
-              e.stopPropagation();
-              // TODO: Implement add child node via create_exhibition_structure invoke command
-            }}
-            title="新增子項目"
-            disabled
-          >
-            <Plus className="w-3.5 h-3.5" />
-          </button>
-        )}
-      </div>
-
-      {/* Children */}
-      {hasChildren && isExpanded && (
-        <div>
-          {node.children!.map((child) => (
-            <TreeNodeComponent
-              key={child.id}
-              node={child}
-              level={level + 1}
-              expandedNodes={expandedNodes}
-              selectedId={selectedId}
-              onToggle={onToggle}
-              onSelect={onSelect}
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Detail Panel
-// ---------------------------------------------------------------------------
-
-function DetailPanel({ nodeId, treeData }: { nodeId: string; treeData: TreeNode[] }) {
-  const result = findNodeWithPath(treeData, nodeId);
-  if (!result) return null;
-
-  const { node, path } = result;
-  const depth = getNodeDepth(treeData, nodeId);
-
-  const [name, setName] = useState(node.name);
-  const [description, setDescription] = useState(
-    descriptionMap[nodeId] ?? "",
-  );
-  const rowData = rowDataMap[nodeId];
-  const [sortOrder, setSortOrder] = useState(rowData?.sort_order ?? 1);
-  const [enabled, setEnabled] = useState(rowData?.enabled ?? true);
-
-  const posters = postersByNode[nodeId] ?? [];
-
-  return (
-    <div className="card-box p-6">
-      {/* Section 1: Header */}
-      <div className="mb-6">
-        <div className="flex items-center gap-3 mb-2">
-          <h2 className="text-xl font-bold text-gray-800">{node.name}</h2>
-          <span className="text-xs font-medium text-white bg-primary px-2.5 py-1 rounded-full whitespace-nowrap">
-            {getLevelBadge(depth)}
-          </span>
-        </div>
-        {/* Breadcrumb */}
-        <div className="flex items-center gap-1.5 text-sm text-gray-400 flex-wrap">
-          {path.map((seg, i) => (
-            <span key={i} className="flex items-center gap-1.5">
-              <span>{seg}</span>
-              <ChevronRight className="w-3.5 h-3.5" />
-            </span>
-          ))}
-          <span className="text-gray-600">{node.name}</span>
-        </div>
-      </div>
-
-      <hr className="border-gray-100 mb-6" />
-
-      {/* Section 2: Edit Form */}
-      <div className="space-y-4 mb-6">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1.5">
-            名稱
-          </label>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-colors"
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1.5">
-            說明
-          </label>
-          <textarea
-            rows={3}
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-colors resize-none"
-          />
-        </div>
-        <div className="flex gap-4">
-          <div className="w-32">
-            <label className="block text-sm font-medium text-gray-700 mb-1.5">
-              排序
-            </label>
-            <input
-              type="number"
-              value={sortOrder}
-              min={0}
-              onChange={(e) => setSortOrder(Number(e.target.value))}
-              className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-colors"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1.5">
-              狀態
-            </label>
-            <div className="flex items-center gap-3 py-2.5">
-              <button
-                type="button"
-                onClick={() => setEnabled((v) => !v)}
-                className={`relative w-11 h-6 rounded-full transition-colors cursor-pointer ${
-                  enabled ? "bg-primary" : "bg-gray-300"
-                }`}
-              >
-                <span
-                  className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-all ${
-                    enabled ? "left-[22px]" : "left-[2px]"
-                  }`}
-                />
-              </button>
-              <span className="text-sm text-gray-600">
-                {enabled ? "啟用" : "停用"}
-              </span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <hr className="border-gray-100 mb-6" />
-
-      {/* Section 3: Included Posters */}
-      <div className="mb-6">
-        <h3 className="text-sm font-semibold text-gray-700 mb-3">
-          包含海報 ({node.posterCount})
-        </h3>
-        {posters.length > 0 ? (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            {posters.map((p, i) => (
-              <div key={i} className="group">
-                <div
-                  className={`aspect-[3/4] bg-gradient-to-br ${p.gradient} rounded-lg flex items-center justify-center`}
-                >
-                  <span className={`${p.textColor} text-xs`}>{p.label}</span>
-                </div>
-                <p className="text-xs text-gray-600 mt-1 truncate">{p.name}</p>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p className="text-sm text-gray-400">尚無海報</p>
-        )}
-      </div>
-
-      <hr className="border-gray-100 mb-6" />
-
-      {/* Action Buttons */}
-      <div className="flex items-center gap-3">
-        <button
-          type="button"
-          className="px-5 py-2.5 bg-primary text-white text-sm font-medium rounded-xl hover:bg-primary-dark transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-          // TODO: Wire to update_exhibition_structure invoke command once available
-          disabled
-        >
-          儲存
-        </button>
-        <button
-          type="button"
-          className="px-5 py-2.5 border border-gray-200 text-red-500 text-sm font-medium rounded-xl hover:bg-red-50 hover:border-red-200 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-          // TODO: Wire to delete_exhibition_structure invoke command once available
-          disabled
-        >
-          刪除
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Empty State
-// ---------------------------------------------------------------------------
-
-function EmptyState() {
-  return (
-    <div className="card-box p-6">
-      <div className="flex flex-col items-center justify-center py-20 text-center">
-        <Folder className="w-16 h-16 text-gray-200 mb-4" strokeWidth={1.5} />
-        <p className="text-gray-400 text-sm">請從左側選擇展覽項目</p>
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Main Page
-// ---------------------------------------------------------------------------
-
-function ExhibitionStructure() {
-  const [treeData, setTreeData] = useState<TreeNode[]>([]);
+function ExhibitionManagement() {
+  const [modal, setModal] = useState<ModalMode>({ kind: "closed" });
+  const [exhibitions, setExhibitions] = useState<Exhibition[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | ExhibitionStatus>("all");
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(
-    () => new Set<string>(),
-  );
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const fetchExhibitions = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      // Order by sort_order ASC (frontend display order), tie-break by newer first.
+      const data = await querySupabase<Exhibition>(
+        "exhibitions",
+        "order=sort_order.asc,created_at.desc",
+      );
+      setExhibitions(data);
+    } catch (e) {
+      setError(formatMutationError(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    async function fetchStructure() {
-      setLoading(true);
-      setError(null);
-      try {
-        const rows = await querySupabase<ExhibitionStructureRow>(
-          "exhibition_structure",
-          "order=sort_order",
-        );
-        if (cancelled) return;
+    fetchExhibitions();
+  }, [fetchExhibitions]);
 
-        if (rows.length > 0) {
-          // Build description and row data maps
-          descriptionMap = {};
-          rowDataMap = {};
-          for (const row of rows) {
-            if (row.description) descriptionMap[row.id] = row.description;
-            rowDataMap[row.id] = row;
-          }
-
-          const tree = buildTree(rows);
-          setTreeData(tree);
-
-          // Auto-expand top-level nodes
-          const topIds = new Set(tree.map((n) => n.id));
-          setExpandedNodes(topIds);
-        } else {
-          // No data from API -- use fallback mock data
-          // TODO: Remove fallback once exhibition_structure table is populated
-          setTreeData(fallbackTreeData);
-          setExpandedNodes(new Set(["1", "1-1", "2"]));
-          setSelectedId("1-1");
-        }
-      } catch (e) {
-        if (!cancelled) {
-          setError(String(e));
-          // Fall back to mock data on error so the UI remains usable
-          setTreeData(fallbackTreeData);
-          setExpandedNodes(new Set(["1", "1-1", "2"]));
-          setSelectedId("1-1");
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    }
-    fetchStructure();
-    return () => { cancelled = true; };
-  }, []);
-
-  const handleToggle = useCallback((id: string) => {
-    setExpandedNodes((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      return next;
+  const filteredExhibitions = useMemo(() => {
+    return exhibitions.filter((t) => {
+      if (statusFilter !== "all" && t.status !== statusFilter) return false;
+      if (searchQuery && !t.name.includes(searchQuery) && !t.description?.includes(searchQuery)) return false;
+      return true;
     });
+  }, [exhibitions, searchQuery, statusFilter]);
+
+  const handleDelete = useCallback(async (ex: Exhibition) => {
+    const ok = window.confirm(`確定要刪除展覽「${ex.name}」嗎？此操作無法復原。`);
+    if (!ok) return;
+    setDeletingId(ex.id);
+    try {
+      await deleteExhibition(ex.id);
+      setExhibitions((prev) => prev.filter((e) => e.id !== ex.id));
+    } catch (e) {
+      alert(`刪除失敗：${formatMutationError(e)}`);
+    } finally {
+      setDeletingId(null);
+    }
   }, []);
 
-  const handleSelect = useCallback((id: string) => {
-    setSelectedId(id);
-  }, []);
+  // 算出下一個建議 sort_order：當前最大 +10（留間隙便於後插）
+  const nextSortOrder = useMemo(() => {
+    const max = exhibitions.reduce((m, e) => Math.max(m, e.sort_order ?? 0), 0);
+    return max + 10;
+  }, [exhibitions]);
 
   return (
-    <div className="max-w-[1400px] mx-auto px-4 sm:px-6 py-8">
-      {/* Page Header */}
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-primary">展覽結構</h1>
-        <p className="text-sm text-gray-500 mt-1">
-          管理展覽的層級架構，組織展區與子區的海報配置
-        </p>
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-primary">展覽管理</h1>
+          <p className="text-sm text-gray-500 mt-1">
+            建立、編輯、刪除展覽資訊。<span className="text-green-700">「進行中」「已結束」</span>會顯示於前台，<span className="text-amber-700">「籌備中」</span>僅內部可見。
+          </p>
+        </div>
+        <button
+          onClick={() => setModal({ kind: "create" })}
+          className="px-5 py-2.5 bg-primary text-white text-sm font-medium rounded-lg hover:bg-primary-light transition-colors flex items-center gap-2 cursor-pointer"
+        >
+          <Plus className="w-4 h-4" />
+          新增展覽
+        </button>
+      </div>
+
+      {/* Filter */}
+      <div className="flex flex-wrap items-center gap-3 mb-6">
+        <div className="relative flex-1 min-w-[200px] max-w-sm">
+          <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+          <input
+            type="text"
+            placeholder="搜尋展覽名稱..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+          />
+        </div>
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value as "all" | ExhibitionStatus)}
+          className="px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white"
+        >
+          <option value="all">全部狀態</option>
+          {statusOrder.map((s) => (
+            <option key={s} value={s}>
+              {statusMeta[s].label}
+            </option>
+          ))}
+        </select>
       </div>
 
       {/* Loading */}
@@ -549,58 +180,294 @@ function ExhibitionStructure() {
         </div>
       )}
 
-      {/* Error banner (non-blocking since we fall back to mock data) */}
+      {/* Error */}
       {error && (
-        <div className="mb-4 px-4 py-2 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-700">
-          無法載入展覽結構資料，目前顯示範例資料。({error})
+        <div className="text-center py-12">
+          <p className="text-red-500 text-sm mb-2">載入失敗</p>
+          <p className="text-gray-400 text-xs">{error}</p>
+          <button
+            onClick={fetchExhibitions}
+            className="mt-4 px-4 py-2 text-sm text-primary border border-primary rounded-lg hover:bg-primary/5 cursor-pointer"
+          >
+            重試
+          </button>
         </div>
       )}
 
-      {/* Two-column layout */}
-      {!loading && (
-        <div className="flex flex-col lg:flex-row gap-6">
-          {/* Left Column: Tree */}
-          <div className="w-full lg:w-[320px] lg:shrink-0">
-            <div className="card-box p-4">
-              {/* Tree header */}
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="text-sm font-semibold text-gray-700">展覽結構</h2>
-                <button
-                  className="text-xs text-primary font-medium hover:text-primary-light px-2 py-1 rounded hover:bg-primary/5 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-                  // TODO: Implement create_exhibition invoke command
-                  disabled
-                >
-                  + 新增
-                </button>
-              </div>
-
-              {/* Tree */}
-              <div className="space-y-0.5">
-                {treeData.map((node) => (
-                  <TreeNodeComponent
-                    key={node.id}
-                    node={node}
-                    level={0}
-                    expandedNodes={expandedNodes}
-                    selectedId={selectedId}
-                    onToggle={handleToggle}
-                    onSelect={handleSelect}
-                  />
-                ))}
-              </div>
+      {/* Card Grid */}
+      {!loading && !error && (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {filteredExhibitions.length === 0 ? (
+            <div className="col-span-full text-center py-12">
+              <p className="text-gray-400 text-sm">
+                {exhibitions.length === 0
+                  ? "目前還沒有任何展覽，按右上「新增展覽」開始建立"
+                  : "無符合條件的展覽"}
+              </p>
             </div>
-          </div>
+          ) : (
+            filteredExhibitions.map((t) => {
+              const meta = statusMeta[t.status] ?? statusMeta.planning;
+              const dateStr = t.created_at ? t.created_at.slice(0, 10) : "";
+              const isDeleting = deletingId === t.id;
 
-          {/* Right Column: Detail */}
-          <div className="flex-1 min-w-0">
-            {selectedId ? (
-              <DetailPanel key={selectedId} nodeId={selectedId} treeData={treeData} />
-            ) : (
-              <EmptyState />
+              return (
+                <div
+                  key={t.id}
+                  className={`card-box !p-0 overflow-hidden transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg ${
+                    isDeleting ? "opacity-50 pointer-events-none" : ""
+                  }`}
+                >
+                  <div className={`h-[180px] flex items-center justify-center relative ${meta.cardTint}`}>
+                    {t.cover_image_path ? (
+                      <img
+                        src={t.cover_image_path}
+                        alt={t.name}
+                        className="w-full h-full object-cover"
+                        onError={(e) => {
+                          // 路徑壞掉時直接隱藏 img，露出底色 + ImageIcon
+                          (e.currentTarget as HTMLImageElement).style.display = "none";
+                        }}
+                      />
+                    ) : (
+                      <div className="border-2 border-dashed border-gray-300 rounded-xl w-3/4 h-3/4 flex flex-col items-center justify-center gap-1">
+                        <ImageIcon className="w-10 h-10 text-gray-300" />
+                        <span className="text-xs text-gray-400">無封面圖</span>
+                      </div>
+                    )}
+                    <span
+                      className={`absolute top-3 right-3 px-2 py-0.5 text-xs font-medium rounded-full ${meta.pillCls}`}
+                    >
+                      {meta.label}
+                    </span>
+                    <span className="absolute top-3 left-3 px-1.5 py-0.5 text-[10px] font-medium rounded bg-white/80 text-gray-500">
+                      #{t.sort_order ?? 0}
+                    </span>
+                  </div>
+                  <div className="p-5">
+                    <h3 className="text-base font-bold text-primary mb-1 truncate" title={t.name}>
+                      {t.name}
+                    </h3>
+                    <p className="text-sm text-gray-500 line-clamp-2 mb-3 min-h-[2.5rem]">
+                      {t.description || "—"}
+                    </p>
+                    <div className="flex items-center justify-between text-xs text-gray-400">
+                      <span>建立於 {dateStr}</span>
+                      <span>排序 {t.sort_order ?? 0}</span>
+                    </div>
+                    <div className="flex items-center justify-between mt-4 pt-3 border-t border-gray-100">
+                      <button
+                        onClick={() => setModal({ kind: "edit", exhibition: t })}
+                        className="text-sm font-medium text-primary hover:underline cursor-pointer"
+                      >
+                        編輯
+                      </button>
+                      <button
+                        onClick={() => handleDelete(t)}
+                        disabled={isDeleting}
+                        className="p-1.5 rounded-md text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors cursor-pointer disabled:cursor-not-allowed"
+                        title="刪除展覽"
+                      >
+                        {isDeleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      )}
+
+      {/* Modal */}
+      {modal.kind !== "closed" && (
+        <ExhibitionModal
+          mode={modal}
+          defaultSortOrder={nextSortOrder}
+          onClose={() => setModal({ kind: "closed" })}
+          onSaved={async () => {
+            setModal({ kind: "closed" });
+            await fetchExhibitions();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── Modal component ─────────────────────────────────────────────────────
+
+interface ExhibitionModalProps {
+  mode: Exclude<ModalMode, { kind: "closed" }>;
+  defaultSortOrder: number;
+  onClose: () => void;
+  onSaved: () => Promise<void> | void;
+}
+
+function ExhibitionModal({ mode, defaultSortOrder, onClose, onSaved }: ExhibitionModalProps) {
+  const initial: ExhibitionInput = mode.kind === "edit"
+    ? {
+        name: mode.exhibition.name,
+        description: mode.exhibition.description ?? "",
+        coverImagePath: mode.exhibition.cover_image_path ?? "",
+        sortOrder: mode.exhibition.sort_order ?? 0,
+        status: mode.exhibition.status,
+      }
+    : {
+        name: "",
+        description: "",
+        coverImagePath: "",
+        sortOrder: defaultSortOrder,
+        status: "planning",
+      };
+
+  const [form, setForm] = useState<ExhibitionInput>(initial);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const isEdit = mode.kind === "edit";
+
+  const handleSubmit = async () => {
+    const trimmedName = form.name.trim();
+    if (!trimmedName) {
+      setSubmitError("展覽名稱為必填");
+      return;
+    }
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      const payload: ExhibitionInput = {
+        name: trimmedName,
+        description: form.description?.trim() ?? "",
+        coverImagePath: form.coverImagePath?.trim() ?? "",
+        sortOrder: typeof form.sortOrder === "number" ? form.sortOrder : 0,
+        status: form.status,
+      };
+      if (isEdit) {
+        await patchExhibition(mode.exhibition.id, payload);
+      } else {
+        await createExhibition(payload);
+      }
+      await onSaved();
+    } catch (e) {
+      setSubmitError(formatMutationError(e));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center"
+      onClick={() => !submitting && onClose()}
+    >
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between sticky top-0 bg-white z-10">
+          <h3 className="text-lg font-bold text-gray-900">{isEdit ? "編輯展覽" : "新增展覽"}</h3>
+          <button
+            onClick={onClose}
+            disabled={submitting}
+            className="p-1 rounded-lg hover:bg-gray-100 cursor-pointer disabled:cursor-not-allowed"
+          >
+            ✕
+          </button>
+        </div>
+        <div className="p-6 space-y-5">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">
+              展覽名稱 <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              placeholder="例如：歲末祝福 2026"
+              className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+              autoFocus
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">描述</label>
+            <textarea
+              rows={3}
+              value={form.description}
+              onChange={(e) => setForm({ ...form, description: e.target.value })}
+              placeholder="這場展覽的主旨、場地或對外文字（會出現在前台）"
+              className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary resize-none"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">封面圖片 URL / 路徑</label>
+            <input
+              type="text"
+              value={form.coverImagePath}
+              onChange={(e) => setForm({ ...form, coverImagePath: e.target.value })}
+              placeholder="https://… 或 Supabase Storage 內的路徑"
+              className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+            />
+            {form.coverImagePath && (
+              <div className="mt-2 h-24 w-full rounded-lg overflow-hidden bg-gray-50 border border-gray-200">
+                <img
+                  src={form.coverImagePath}
+                  alt="預覽"
+                  className="w-full h-full object-cover"
+                  onError={(e) => {
+                    (e.currentTarget as HTMLImageElement).style.display = "none";
+                  }}
+                />
+              </div>
             )}
           </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                排序（小→大）
+              </label>
+              <input
+                type="number"
+                value={form.sortOrder ?? 0}
+                min={0}
+                onChange={(e) => setForm({ ...form, sortOrder: Number(e.target.value) })}
+                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">狀態</label>
+              <select
+                value={form.status}
+                onChange={(e) => setForm({ ...form, status: e.target.value as ExhibitionStatus })}
+                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm bg-white"
+              >
+                <option value="planning">籌備中（前台不顯示）</option>
+                <option value="ongoing">進行中（前台顯示）</option>
+                <option value="finished">已結束（前台仍可看見）</option>
+              </select>
+            </div>
+          </div>
+          {submitError && (
+            <div className="px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+              {submitError}
+            </div>
+          )}
         </div>
-      )}
+        <div className="px-6 py-4 border-t border-gray-100 flex justify-end gap-3 sticky bottom-0 bg-white">
+          <button
+            onClick={onClose}
+            disabled={submitting}
+            className="px-4 py-2 text-sm text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50 cursor-pointer disabled:cursor-not-allowed"
+          >
+            取消
+          </button>
+          <button
+            onClick={handleSubmit}
+            disabled={submitting}
+            className="px-6 py-2 text-sm text-white bg-primary rounded-lg hover:bg-primary-light cursor-pointer font-medium disabled:bg-primary/60 disabled:cursor-not-allowed flex items-center gap-2"
+          >
+            {submitting && <Loader2 className="w-4 h-4 animate-spin" />}
+            {isEdit ? "儲存變更" : "儲存"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

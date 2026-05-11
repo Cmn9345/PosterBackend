@@ -1,6 +1,6 @@
 {
   "name": "poster-admin-app",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "慈濟海報資料庫後台 - Tauri Desktop App",
   "type": "module",
   "scripts": {

@@ -43,6 +43,92 @@ async fn patch_user_role(
         .await
 }
 
+/// Create a new `exhibitions` row. Aligned with production schema:
+///   status enum: planning | ongoing | finished
+///   cover_image_path: URL/path to cover image
+///   sort_order: int, smaller = earlier in frontend list
+/// RLS gates writes to `app_role='系統管理員'`, so this is a thin passthrough —
+/// the same policy that governs Supabase INSERT governs this command. Returns
+/// the created row as JSON so the frontend can splice it in without re-fetch.
+#[tauri::command]
+async fn create_exhibition(
+    state: tauri::State<'_, upload::UploadState>,
+    name: String,
+    description: Option<String>,
+    cover_image_path: Option<String>,
+    sort_order: Option<i32>,
+    status: String,
+) -> Result<String, String> {
+    if name.trim().is_empty() {
+        return Err("展覽名稱不可為空".into());
+    }
+    let allowed = ["planning", "ongoing", "finished"];
+    if !allowed.contains(&status.as_str()) {
+        return Err(format!(
+            "status 必須是 planning / ongoing / finished 其中一個（收到：{}）",
+            status
+        ));
+    }
+    state
+        .supabase_client
+        .insert_exhibition(
+            name.trim(),
+            description.as_deref(),
+            cover_image_path.as_deref(),
+            sort_order,
+            &status,
+        )
+        .await
+}
+
+/// PATCH an `exhibitions` row. `None` fields are skipped; empty strings clear
+/// the column. Same RLS gate as `create_exhibition`.
+#[tauri::command]
+async fn patch_exhibition(
+    state: tauri::State<'_, upload::UploadState>,
+    id: String,
+    name: Option<String>,
+    description: Option<String>,
+    cover_image_path: Option<String>,
+    sort_order: Option<i32>,
+    status: Option<String>,
+) -> Result<(), String> {
+    if let Some(n) = &name {
+        if n.trim().is_empty() {
+            return Err("展覽名稱不可為空".into());
+        }
+    }
+    if let Some(s) = &status {
+        let allowed = ["planning", "ongoing", "finished"];
+        if !allowed.contains(&s.as_str()) {
+            return Err(format!(
+                "status 必須是 planning / ongoing / finished 其中一個（收到：{}）",
+                s
+            ));
+        }
+    }
+    state
+        .supabase_client
+        .update_exhibition(
+            &id,
+            name.as_deref().map(str::trim),
+            description.as_deref(),
+            cover_image_path.as_deref(),
+            sort_order,
+            status.as_deref(),
+        )
+        .await
+}
+
+/// DELETE an `exhibitions` row. Same RLS gate as `create_exhibition`.
+#[tauri::command]
+async fn delete_exhibition(
+    state: tauri::State<'_, upload::UploadState>,
+    id: String,
+) -> Result<(), String> {
+    state.supabase_client.delete_exhibition(&id).await
+}
+
 /// Return a short-lived signed URL for a thumbnail stored in the
 /// `poster-thumbnails` bucket. Used by the review page to render previews.
 #[tauri::command]
@@ -216,6 +302,10 @@ pub fn run() {
             sign_thumbnail_url,
             // Permission management
             patch_user_role,
+            // Exhibitions (主題展覽 CRUD)
+            create_exhibition,
+            patch_exhibition,
+            delete_exhibition,
             // Generic Supabase query
             query_supabase,
         ])

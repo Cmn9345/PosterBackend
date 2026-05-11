@@ -110,4 +110,10 @@
 
   @keyframes pmBackdropIn { from { opacity: 0 } to { opacity: 1 } }
   .pm-backdrop-anim { animation: pmBackdropIn 200ms ease-out both; }
+
+  /* Used by the theme-poster drawer in /exhibitions/. */
+  @keyframes slideInRight {
+    from { transform: translateX(16px); opacity: 0; }
+    to   { transform: translateX(0);    opacity: 1; }
+  }
 }

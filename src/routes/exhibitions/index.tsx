@@ -1,105 +1,85 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Plus, Search, ImageIcon, Loader2 } from "lucide-react";
+import { Loader2, X, Search, FolderOpen } from "lucide-react";
 import { useState, useEffect, useMemo } from "react";
 import { querySupabase } from "../../lib/api";
 
 export const Route = createFileRoute("/exhibitions/")({
-  component: ThemeCuration,
+  component: ThemePosterManagement,
 });
 
-interface Exhibition {
+// ── Types ───────────────────────────────────────────────────────────────
+
+/** Row from `vocabulary_themes` (Supabase migration 006). */
+interface VocabularyTheme {
   id: string;
   name: string;
-  description: string;
-  poster_count: number;
-  created_at: string;
-  status: "published" | "draft";
-  cover_gradient?: string;
-  cover_text?: string;
+  code?: string;
+  description?: string;
+  icon?: string;
+  color?: string;
+  bg_color?: string;
+  poster_count?: number;
+  sort_order?: number;
+  is_active?: boolean;
 }
 
-/** Fallback gradient based on index */
-const fallbackGradients = [
-  "from-blue-50 to-blue-100",
-  "from-amber-50 to-amber-100",
-  "from-emerald-50 to-emerald-100",
-  "from-green-50 to-green-100",
-  "from-violet-50 to-violet-100",
-  "from-rose-50 to-rose-100",
-];
+/**
+ * Row from `poster_files` joined with `posters`. Themes live as a Postgres
+ * `text[]` on poster_files; we filter on the array with PostgREST's `cs`
+ * (contains) operator.
+ */
+interface PosterFileRow {
+  id: string;
+  poster_id: string;
+  description?: string | null;
+  themes?: string[] | null;
+  posters: {
+    id: string;
+    project_name: string;
+    status: string;
+    updated_at?: string;
+  } | null;
+}
 
-function ThemeCuration() {
-  const [showModal, setShowModal] = useState(false);
-  const [exhibitions, setExhibitions] = useState<Exhibition[]>([]);
+// ── Page ────────────────────────────────────────────────────────────────
+
+function ThemePosterManagement() {
+  const [themes, setThemes] = useState<VocabularyTheme[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"all" | "published" | "draft">("all");
+  const [selectedTheme, setSelectedTheme] = useState<VocabularyTheme | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    async function fetchExhibitions() {
+    async function fetchThemes() {
       setLoading(true);
       setError(null);
       try {
-        const data = await querySupabase<Exhibition>("exhibitions", "order=created_at.desc");
-        if (!cancelled) setExhibitions(data);
+        const data = await querySupabase<VocabularyTheme>(
+          "vocabulary_themes",
+          "is_active=eq.true&order=sort_order.asc",
+        );
+        if (!cancelled) setThemes(data);
       } catch (e) {
         if (!cancelled) setError(String(e));
       } finally {
         if (!cancelled) setLoading(false);
       }
     }
-    fetchExhibitions();
-    return () => { cancelled = true; };
+    fetchThemes();
+    return () => {
+      cancelled = true;
+    };
   }, []);
-
-  const filteredExhibitions = useMemo(() => {
-    return exhibitions.filter((t) => {
-      if (statusFilter !== "all" && t.status !== statusFilter) return false;
-      if (searchQuery && !t.name.includes(searchQuery) && !t.description?.includes(searchQuery)) return false;
-      return true;
-    });
-  }, [exhibitions, searchQuery, statusFilter]);
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-primary">主題展覽管理</h1>
-          <p className="text-sm text-gray-500 mt-1">管理主題展覽，策劃海報合集供前台展示</p>
-        </div>
-        <button
-          onClick={() => setShowModal(true)}
-          className="px-5 py-2.5 bg-primary text-white text-sm font-medium rounded-lg hover:bg-primary-light transition-colors flex items-center gap-2"
-        >
-          <Plus className="w-4 h-4" />
-          新增主題
-        </button>
-      </div>
-
-      {/* Filter */}
-      <div className="flex flex-wrap items-center gap-3 mb-6">
-        <div className="relative flex-1 min-w-[200px] max-w-sm">
-          <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-          <input
-            type="text"
-            placeholder="搜尋主題名稱..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
-          />
-        </div>
-        <select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value as "all" | "published" | "draft")}
-          className="px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white"
-        >
-          <option value="all">全部</option>
-          <option value="published">已發布</option>
-          <option value="draft">草稿</option>
-        </select>
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-primary">主題海報</h1>
+        <p className="text-sm text-gray-500 mt-1">
+          依 12 個固定主題（朔源 / 慈善 / 醫療 …）瀏覽底下收錄的海報。點任一卡片打開該主題的海報清單。
+        </p>
       </div>
 
       {/* Loading */}
@@ -112,100 +92,234 @@ function ThemeCuration() {
       {/* Error */}
       {error && (
         <div className="text-center py-12">
-          <p className="text-red-500 text-sm mb-2">載入失敗</p>
+          <p className="text-red-500 text-sm mb-2">載入主題失敗</p>
           <p className="text-gray-400 text-xs">{error}</p>
         </div>
       )}
 
-      {/* Card Grid */}
+      {/* Theme grid */}
       {!loading && !error && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredExhibitions.length === 0 ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+          {themes.length === 0 ? (
             <div className="col-span-full text-center py-12">
-              <p className="text-gray-400 text-sm">無符合條件的展覽</p>
+              <p className="text-gray-400 text-sm">
+                還沒有任何主題。請先於 Supabase 套用 006_vocabulary_themes.sql migration。
+              </p>
             </div>
           ) : (
-            filteredExhibitions.map((t, idx) => {
-              const gradient = t.cover_gradient || fallbackGradients[idx % fallbackGradients.length];
-              const coverText = t.cover_text ?? (t.status === "draft" ? "" : t.name.slice(0, 4));
-              const dateStr = t.created_at ? t.created_at.slice(0, 10) : "";
-              const posterCount = t.poster_count ?? 0;
-
-              return (
-                <div
-                  key={t.id}
-                  className="card-box !p-0 overflow-hidden transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg cursor-pointer"
-                >
-                  <div className={`h-[180px] bg-gradient-to-br ${gradient} flex items-center justify-center relative`}>
-                    {t.status === "draft" && !coverText ? (
-                      <div className="border-2 border-dashed border-gray-300 rounded-xl w-3/4 h-3/4 flex items-center justify-center">
-                        <ImageIcon className="w-10 h-10 text-gray-300" />
-                      </div>
-                    ) : (
-                      <span className="text-2xl font-bold text-gray-300/60">{coverText}</span>
-                    )}
-                    <span
-                      className={`absolute top-3 right-3 px-2 py-0.5 text-xs font-medium rounded-full ${
-                        t.status === "published" ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-600"
-                      }`}
-                    >
-                      {t.status === "published" ? "已發布" : "草稿"}
-                    </span>
-                  </div>
-                  <div className="p-5">
-                    <h3 className="text-base font-bold text-primary mb-1">{t.name}</h3>
-                    <p className="text-sm text-gray-500 line-clamp-2 mb-3">{t.description}</p>
-                    <div className="flex items-center justify-between text-xs text-gray-400">
-                      <span className={posterCount === 0 ? "text-amber-500 font-medium" : ""}>
-                        收錄 {posterCount} 張海報
-                      </span>
-                      <span>{dateStr}</span>
-                    </div>
-                    <div className="flex items-center gap-3 mt-4 pt-3 border-t border-gray-100">
-                      <button className="text-sm font-medium text-primary hover:underline">編輯</button>
-                      <button className="text-sm font-medium text-primary hover:underline">管理海報</button>
-                    </div>
-                  </div>
+            themes.map((t) => (
+              <button
+                key={t.id}
+                onClick={() => setSelectedTheme(t)}
+                className="card-box p-5 text-left transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg cursor-pointer"
+                style={{ backgroundColor: t.bg_color || "#f9fafb" }}
+              >
+                <div className="flex items-start justify-between mb-3">
+                  <span className="text-3xl" aria-hidden>
+                    {t.icon || "📁"}
+                  </span>
+                  <span className="px-2 py-0.5 text-xs font-semibold rounded-full bg-white/80 text-gray-700">
+                    {t.poster_count ?? 0} 張
+                  </span>
                 </div>
-              );
-            })
+                <h3 className="text-lg font-bold mb-1" style={{ color: t.color || "#1f2937" }}>
+                  {t.name}
+                </h3>
+                <p className="text-xs text-gray-600 line-clamp-3 min-h-[3rem]">
+                  {t.description || "—"}
+                </p>
+              </button>
+            ))
           )}
         </div>
       )}
 
-      {/* Modal */}
-      {showModal && (
-        <div className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center" onClick={() => setShowModal(false)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4" onClick={(e) => e.stopPropagation()}>
-            <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-              <h3 className="text-lg font-bold text-gray-900">新增主題</h3>
-              <button onClick={() => setShowModal(false)} className="p-1 rounded-lg hover:bg-gray-100 cursor-pointer">✕</button>
-            </div>
-            <div className="p-6 space-y-5">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1.5">主題名稱 <span className="text-red-500">*</span></label>
-                <input type="text" placeholder="請輸入主題名稱" className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1.5">描述</label>
-                <textarea rows={3} placeholder="請輸入主題描述" className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary resize-none" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1.5">狀態</label>
-                <select className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm bg-white">
-                  <option>草稿</option>
-                  <option>已發布</option>
-                </select>
-              </div>
-            </div>
-            <div className="px-6 py-4 border-t border-gray-100 flex justify-end gap-3">
-              <button onClick={() => setShowModal(false)} className="px-4 py-2 text-sm text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50 cursor-pointer">取消</button>
-              {/* TODO: Wire to create_exhibition invoke command once available */}
-              <button className="px-6 py-2 text-sm text-white bg-primary rounded-lg hover:bg-primary-light cursor-pointer font-medium">儲存</button>
+      {/* Drawer */}
+      {selectedTheme && (
+        <ThemePosterDrawer theme={selectedTheme} onClose={() => setSelectedTheme(null)} />
+      )}
+    </div>
+  );
+}
+
+// ── Drawer ──────────────────────────────────────────────────────────────
+
+const statusLabel: Record<string, { label: string; cls: string }> = {
+  draft: { label: "草稿", cls: "bg-gray-100 text-gray-600" },
+  pending_review: { label: "審核中", cls: "bg-amber-100 text-amber-700" },
+  approved: { label: "已通過", cls: "bg-emerald-100 text-emerald-700" },
+  published: { label: "已發布", cls: "bg-green-100 text-green-700" },
+  rejected: { label: "退件", cls: "bg-red-100 text-red-700" },
+};
+
+function ThemePosterDrawer({
+  theme,
+  onClose,
+}: {
+  theme: VocabularyTheme;
+  onClose: () => void;
+}) {
+  const [rows, setRows] = useState<PosterFileRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchPosters() {
+      setLoading(true);
+      setError(null);
+      try {
+        // PostgREST `cs` operator on text[]: themes=cs.{慈善}
+        // Need to encode the curly braces so they survive URL parsing.
+        const encoded = encodeURIComponent(`{${theme.name}}`);
+        const data = await querySupabase<PosterFileRow>(
+          "poster_files",
+          `themes=cs.${encoded}&select=id,poster_id,description,themes,posters(id,project_name,status,updated_at)&limit=200`,
+        );
+        if (!cancelled) setRows(data);
+      } catch (e) {
+        if (!cancelled) setError(String(e));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    fetchPosters();
+    return () => {
+      cancelled = true;
+    };
+  }, [theme.name]);
+
+  const filteredSorted = useMemo(() => {
+    // De-dupe by poster_id — one project can have multiple files all tagged
+    // the same theme; reviewer cares about projects, not files.
+    const seen = new Set<string>();
+    const unique: PosterFileRow[] = [];
+    for (const r of rows) {
+      if (!r.posters) continue;
+      if (seen.has(r.poster_id)) continue;
+      seen.add(r.poster_id);
+      unique.push(r);
+    }
+    const filtered = searchQuery
+      ? unique.filter(
+          (r) =>
+            r.posters?.project_name.includes(searchQuery) ||
+            r.description?.includes(searchQuery),
+        )
+      : unique;
+    // Newest first by posters.updated_at
+    return filtered.sort((a, b) => {
+      const ta = a.posters?.updated_at ?? "";
+      const tb = b.posters?.updated_at ?? "";
+      return tb.localeCompare(ta);
+    });
+  }, [rows, searchQuery]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end" onClick={onClose}>
+      <div className="fixed inset-0 bg-black/30" />
+      <div
+        className="relative bg-white w-full max-w-2xl h-full shadow-2xl flex flex-col animate-[slideInRight_0.2s_ease-out]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div
+          className="px-6 py-4 border-b border-gray-100 flex items-center justify-between"
+          style={{ backgroundColor: theme.bg_color || "#f9fafb" }}
+        >
+          <div className="flex items-center gap-3">
+            <span className="text-2xl" aria-hidden>
+              {theme.icon || "📁"}
+            </span>
+            <div>
+              <h3 className="text-lg font-bold" style={{ color: theme.color || "#1f2937" }}>
+                {theme.name}
+              </h3>
+              <p className="text-xs text-gray-600">
+                {loading ? "載入中…" : `${filteredSorted.length} 張海報`}
+              </p>
             </div>
           </div>
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-lg hover:bg-white/50 cursor-pointer"
+            aria-label="關閉"
+          >
+            <X className="w-5 h-5 text-gray-600" />
+          </button>
         </div>
-      )}
+
+        {/* Search */}
+        <div className="px-6 py-3 border-b border-gray-100">
+          <div className="relative">
+            <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              placeholder="搜尋海報名稱或描述..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+            />
+          </div>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto px-6 py-4">
+          {loading && (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="w-6 h-6 text-primary animate-spin" />
+            </div>
+          )}
+          {error && (
+            <div className="text-center py-8">
+              <p className="text-red-500 text-sm">載入失敗</p>
+              <p className="text-gray-400 text-xs mt-1 break-all">{error}</p>
+            </div>
+          )}
+          {!loading && !error && filteredSorted.length === 0 && (
+            <div className="flex flex-col items-center justify-center py-16 text-center">
+              <FolderOpen className="w-12 h-12 text-gray-200 mb-3" strokeWidth={1.5} />
+              <p className="text-gray-400 text-sm">
+                {searchQuery ? "無符合的海報" : "此主題尚無海報"}
+              </p>
+              {!searchQuery && (
+                <p className="text-gray-300 text-xs mt-1">
+                  海報在 VLM 分析時會自動歸入相關主題
+                </p>
+              )}
+            </div>
+          )}
+          {!loading && !error && filteredSorted.length > 0 && (
+            <ul className="divide-y divide-gray-100">
+              {filteredSorted.map((row) => {
+                const p = row.posters!;
+                const st = statusLabel[p.status] ?? { label: p.status, cls: "bg-gray-100 text-gray-600" };
+                return (
+                  <li key={row.id} className="py-3 hover:bg-gray-50 -mx-2 px-2 rounded-md transition-colors">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <h4 className="text-sm font-medium text-gray-800 truncate">
+                          {p.project_name || "（未命名）"}
+                        </h4>
+                        {row.description && (
+                          <p className="text-xs text-gray-500 line-clamp-2 mt-0.5">{row.description}</p>
+                        )}
+                        <p className="text-xs text-gray-400 mt-1">
+                          更新於 {p.updated_at?.slice(0, 10) ?? "—"}
+                        </p>
+                      </div>
+                      <span className={`shrink-0 px-2 py-0.5 text-xs font-medium rounded-full ${st.cls}`}>
+                        {st.label}
+                      </span>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

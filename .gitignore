@@ -36,3 +36,6 @@ src/routeTree.gen.ts
 
 # Vite cache
 .vite/
+
+# Claude Code local state (per-session logs, history). Not for the repo.
+.claude/

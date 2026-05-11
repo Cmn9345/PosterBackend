@@ -8,8 +8,8 @@ import { PermissionModal } from "../components/PermissionModal";
 const navItems = [
   { to: "/", label: "儀表盤" },
   { to: "/posters", label: "海報管理" },
-  { to: "/exhibitions", label: "主題展覽管理" },
-  { to: "/exhibition-structure", label: "展覽結構" },
+  { to: "/exhibitions", label: "主題海報" },
+  { to: "/exhibition-structure", label: "展覽管理" },
   { to: "/poster-reviews", label: "上架審核" },
   { to: "/applications", label: "申請審核" },
   { to: "/statistics", label: "統計" },
@@ -55,6 +55,12 @@ function RootLayout() {
         <div className="flex items-center gap-3">
           <img src="/tzuchi-logo.png" alt="慈濟" className="h-8 w-auto" />
           <span className="font-title font-semibold text-lg text-primary">海報資料庫後台</span>
+          <span
+            className="px-1.5 py-0.5 text-[10px] font-mono font-medium tracking-tight text-gray-500 bg-gray-100 rounded"
+            title={`版本 ${__APP_VERSION__}`}
+          >
+            v{__APP_VERSION__}
+          </span>
         </div>
 
         <div className="hidden md:flex items-center gap-1">

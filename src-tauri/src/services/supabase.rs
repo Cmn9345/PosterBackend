@@ -772,6 +772,143 @@ impl SupabaseClient {
         Ok(full)
     }
 
+    // ── Exhibitions API ────────────────────────────────────────────
+
+    /// Insert a new `exhibitions` row. Aligns with the production schema:
+    ///   - status enum: planning | ongoing | finished
+    ///   - cover_image_path: text/URL pointing at the cover image
+    ///   - sort_order: int, smaller = earlier in the frontend list
+    /// Returns the created row (with server-generated id / timestamps) so the
+    /// frontend can splice it into its list without a re-fetch round trip.
+    pub async fn insert_exhibition(
+        &self,
+        name: &str,
+        description: Option<&str>,
+        cover_image_path: Option<&str>,
+        sort_order: Option<i32>,
+        status: &str,
+    ) -> Result<String, String> {
+        let url = format!("{}/rest/v1/exhibitions", self.url);
+        let key = self.bearer_key().await;
+
+        let mut body = json!({
+            "name": name,
+            "status": status,
+        });
+        if let Some(d) = description.filter(|s| !s.is_empty()) {
+            body["description"] = json!(d);
+        }
+        if let Some(p) = cover_image_path.filter(|s| !s.is_empty()) {
+            body["cover_image_path"] = json!(p);
+        }
+        if let Some(o) = sort_order {
+            body["sort_order"] = json!(o);
+        }
+
+        let resp = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", key))
+            .header("apikey", &self.anon_key)
+            .header("Content-Type", "application/json")
+            // Return the inserted row so the frontend can update its list.
+            .header("Prefer", "return=representation")
+            .body(body.to_string())
+            .send()
+            .await
+            .map_err(|e| format!("Insert exhibition failed: {}", e))?;
+
+        if resp.status().is_success() || resp.status().as_u16() == 201 {
+            let text = resp.text().await.unwrap_or_default();
+            info!("[Supabase] Inserted exhibition: {}", name);
+            Ok(text)
+        } else {
+            let status_code = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            Err(format!("Insert exhibition failed ({}): {}", status_code, text))
+        }
+    }
+
+    /// PATCH a single `exhibitions` row. Only the fields actually passed are
+    /// updated — `None` means "leave as-is". Empty strings clear the column
+    /// (sent as JSON null). `updated_at` is maintained by the table trigger so
+    /// we don't need to send it.
+    pub async fn update_exhibition(
+        &self,
+        exhibition_id: &str,
+        name: Option<&str>,
+        description: Option<&str>,
+        cover_image_path: Option<&str>,
+        sort_order: Option<i32>,
+        status: Option<&str>,
+    ) -> Result<(), String> {
+        let mut body = serde_json::Map::new();
+        if let Some(n) = name {
+            body.insert("name".into(), json!(n));
+        }
+        if let Some(d) = description {
+            body.insert("description".into(), if d.is_empty() { json!(null) } else { json!(d) });
+        }
+        if let Some(p) = cover_image_path {
+            body.insert("cover_image_path".into(), if p.is_empty() { json!(null) } else { json!(p) });
+        }
+        if let Some(o) = sort_order {
+            body.insert("sort_order".into(), json!(o));
+        }
+        if let Some(s) = status {
+            body.insert("status".into(), json!(s));
+        }
+        if body.is_empty() {
+            return Ok(());
+        }
+
+        let url = format!("{}/rest/v1/exhibitions?id=eq.{}", self.url, exhibition_id);
+        let key = self.bearer_key().await;
+        let resp = self
+            .client
+            .patch(&url)
+            .header("Authorization", format!("Bearer {}", key))
+            .header("apikey", &self.anon_key)
+            .header("Content-Type", "application/json")
+            .header("Prefer", "return=minimal")
+            .body(serde_json::Value::Object(body).to_string())
+            .send()
+            .await
+            .map_err(|e| format!("Update exhibition failed: {}", e))?;
+
+        if resp.status().is_success() {
+            info!("[Supabase] Updated exhibition: {}", exhibition_id);
+            Ok(())
+        } else {
+            let status_code = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            Err(format!("Update exhibition failed ({}): {}", status_code, text))
+        }
+    }
+
+    /// DELETE an `exhibitions` row by id.
+    pub async fn delete_exhibition(&self, exhibition_id: &str) -> Result<(), String> {
+        let url = format!("{}/rest/v1/exhibitions?id=eq.{}", self.url, exhibition_id);
+        let key = self.bearer_key().await;
+        let resp = self
+            .client
+            .delete(&url)
+            .header("Authorization", format!("Bearer {}", key))
+            .header("apikey", &self.anon_key)
+            .header("Prefer", "return=minimal")
+            .send()
+            .await
+            .map_err(|e| format!("Delete exhibition failed: {}", e))?;
+        if resp.status().is_success() {
+            info!("[Supabase] Deleted exhibition: {}", exhibition_id);
+            Ok(())
+        } else {
+            let status_code = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            Err(format!("Delete exhibition failed ({}): {}", status_code, text))
+        }
+    }
+
     /// Download raw bytes from Supabase Storage — needed by qwenpaw worker
     /// to pull the uploaded original before running metadata/thumbnail pipeline.
     pub async fn download_from_storage(

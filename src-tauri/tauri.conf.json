@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "海報資料庫後台",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "identifier": "org.tzuchi.poster-admin",
   "build": {
     "frontendDist": "../dist",
