@@ -778,6 +778,8 @@ impl SupabaseClient {
     ///   - status enum: planning | ongoing | finished
     ///   - cover_image_path: text/URL pointing at the cover image
     ///   - sort_order: int, smaller = earlier in the frontend list
+    ///   - start_date / end_date: ISO date strings (YYYY-MM-DD); end_date NULL = 常設
+    ///   - location: 展出地點純文字
     /// Returns the created row (with server-generated id / timestamps) so the
     /// frontend can splice it into its list without a re-fetch round trip.
     pub async fn insert_exhibition(
@@ -787,6 +789,9 @@ impl SupabaseClient {
         cover_image_path: Option<&str>,
         sort_order: Option<i32>,
         status: &str,
+        start_date: Option<&str>,
+        end_date: Option<&str>,
+        location: Option<&str>,
     ) -> Result<String, String> {
         let url = format!("{}/rest/v1/exhibitions", self.url);
         let key = self.bearer_key().await;
@@ -803,6 +808,15 @@ impl SupabaseClient {
         }
         if let Some(o) = sort_order {
             body["sort_order"] = json!(o);
+        }
+        if let Some(s) = start_date.filter(|s| !s.is_empty()) {
+            body["start_date"] = json!(s);
+        }
+        if let Some(e) = end_date.filter(|s| !s.is_empty()) {
+            body["end_date"] = json!(e);
+        }
+        if let Some(l) = location.filter(|s| !s.is_empty()) {
+            body["location"] = json!(l);
         }
 
         let resp = self
@@ -841,6 +855,9 @@ impl SupabaseClient {
         cover_image_path: Option<&str>,
         sort_order: Option<i32>,
         status: Option<&str>,
+        start_date: Option<&str>,
+        end_date: Option<&str>,
+        location: Option<&str>,
     ) -> Result<(), String> {
         let mut body = serde_json::Map::new();
         if let Some(n) = name {
@@ -857,6 +874,15 @@ impl SupabaseClient {
         }
         if let Some(s) = status {
             body.insert("status".into(), json!(s));
+        }
+        if let Some(s) = start_date {
+            body.insert("start_date".into(), if s.is_empty() { json!(null) } else { json!(s) });
+        }
+        if let Some(e) = end_date {
+            body.insert("end_date".into(), if e.is_empty() { json!(null) } else { json!(e) });
+        }
+        if let Some(l) = location {
+            body.insert("location".into(), if l.is_empty() { json!(null) } else { json!(l) });
         }
         if body.is_empty() {
             return Ok(());

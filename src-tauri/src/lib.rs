@@ -47,6 +47,8 @@ async fn patch_user_role(
 ///   status enum: planning | ongoing | finished
 ///   cover_image_path: URL/path to cover image
 ///   sort_order: int, smaller = earlier in frontend list
+///   start_date / end_date: ISO date "YYYY-MM-DD"; end_date None/"" = 常設
+///   location: 展出地點純文字
 /// RLS gates writes to `app_role='系統管理員'`, so this is a thin passthrough —
 /// the same policy that governs Supabase INSERT governs this command. Returns
 /// the created row as JSON so the frontend can splice it in without re-fetch.
@@ -58,6 +60,9 @@ async fn create_exhibition(
     cover_image_path: Option<String>,
     sort_order: Option<i32>,
     status: String,
+    start_date: Option<String>,
+    end_date: Option<String>,
+    location: Option<String>,
 ) -> Result<String, String> {
     if name.trim().is_empty() {
         return Err("展覽名稱不可為空".into());
@@ -69,6 +74,13 @@ async fn create_exhibition(
             status
         ));
     }
+    // Light sanity check on dates — Postgres will reject malformed strings
+    // anyway, but a clearer message here saves a network roundtrip.
+    if let (Some(s), Some(e)) = (start_date.as_deref(), end_date.as_deref()) {
+        if !s.is_empty() && !e.is_empty() && s > e {
+            return Err("展期結束日不能早於起始日".into());
+        }
+    }
     state
         .supabase_client
         .insert_exhibition(
@@ -77,6 +89,9 @@ async fn create_exhibition(
             cover_image_path.as_deref(),
             sort_order,
             &status,
+            start_date.as_deref(),
+            end_date.as_deref(),
+            location.as_deref(),
         )
         .await
 }
@@ -92,6 +107,9 @@ async fn patch_exhibition(
     cover_image_path: Option<String>,
     sort_order: Option<i32>,
     status: Option<String>,
+    start_date: Option<String>,
+    end_date: Option<String>,
+    location: Option<String>,
 ) -> Result<(), String> {
     if let Some(n) = &name {
         if n.trim().is_empty() {
@@ -107,6 +125,11 @@ async fn patch_exhibition(
             ));
         }
     }
+    if let (Some(s), Some(e)) = (start_date.as_deref(), end_date.as_deref()) {
+        if !s.is_empty() && !e.is_empty() && s > e {
+            return Err("展期結束日不能早於起始日".into());
+        }
+    }
     state
         .supabase_client
         .update_exhibition(
@@ -116,6 +139,9 @@ async fn patch_exhibition(
             cover_image_path.as_deref(),
             sort_order,
             status.as_deref(),
+            start_date.as_deref(),
+            end_date.as_deref(),
+            location.as_deref(),
         )
         .await
 }

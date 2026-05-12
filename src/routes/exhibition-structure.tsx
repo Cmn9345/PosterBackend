@@ -14,6 +14,80 @@ export const Route = createFileRoute("/exhibition-structure")({
   component: ExhibitionManagement,
 });
 
+// 展出地點下拉選單預設清單（2026/05 最新版，按四大志業 + 地理分組）。
+// 來源：靜思書軒門市清單、慈濟醫療志業七院一診所、官方聯絡點頁；屏東新靜思堂 2024 上樑中。
+// 增刪志業體只要動這個陣列即可；不會動到 DB schema，欄位仍是純 text。
+// 使用者可以選「其他（自行輸入）」改成自由輸入，未來社區據點或海外場館不會被卡住。
+const TZUCHI_VENUE_GROUPS: { label: string; venues: string[] }[] = [
+  {
+    label: "本會・精舍",
+    venues: ["花蓮靜思精舍", "花蓮靜思堂"],
+  },
+  {
+    label: "靜思堂 / 園區・北區",
+    venues: [
+      "關渡靜思堂（台北）",
+      "內湖園區",
+      "中正靜思堂",
+      "萬華靜思堂",
+      "板橋靜思堂",
+      "三重靜思堂",
+      "三峽園區",
+      "蘆洲靜思堂",
+      "新店靜思堂",
+      "雙和靜思堂",
+      "中壢園區",
+      "桃園靜思堂",
+      "新竹靜思堂",
+    ],
+  },
+  {
+    label: "靜思堂・中區",
+    venues: [
+      "苗栗靜思堂",
+      "台中靜思堂",
+      "彰化靜思堂",
+      "南投靜思堂",
+      "斗六靜思堂",
+      "嘉義靜思堂",
+    ],
+  },
+  {
+    label: "靜思堂・南區",
+    venues: ["台南靜思堂", "高雄靜思堂", "屏東靜思堂"],
+  },
+  {
+    label: "靜思堂・東區 / 離島",
+    venues: ["玉里靜思堂", "台東靜思堂", "宜蘭靜思堂"],
+  },
+  {
+    label: "醫療",
+    venues: [
+      "花蓮慈濟醫院",
+      "台北慈濟醫院",
+      "台中慈濟醫院",
+      "大林慈濟醫院",
+      "玉里慈濟醫院",
+      "關山慈濟醫院",
+      "斗六慈濟醫院",
+      "嘉義慈濟診所",
+      "三義慈濟中醫醫院",
+    ],
+  },
+  {
+    label: "教育",
+    // 慈濟科技大學已於 2024 併入慈濟大學，原校區改稱慈大「人文社會學院／健康科學院」校區
+    venues: ["慈濟大學", "慈大附中", "慈大附小"],
+  },
+  {
+    label: "人文",
+    venues: ["大愛電視台", "靜思人文志業中心", "經典雜誌"],
+  },
+];
+
+const ALL_TZUCHI_VENUES = TZUCHI_VENUE_GROUPS.flatMap((g) => g.venues);
+const VENUE_OTHER_SENTINEL = "__other__";
+
 // 對應 production schema：public.exhibitions
 interface Exhibition {
   id: string;
@@ -22,6 +96,12 @@ interface Exhibition {
   cover_image_path: string | null;
   status: ExhibitionStatus;
   sort_order: number;
+  /** ISO date "YYYY-MM-DD"；null = 未填 */
+  start_date: string | null;
+  /** ISO date "YYYY-MM-DD"；null = 常設展 */
+  end_date: string | null;
+  /** 展出地點純文字；null = 未填 */
+  location: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -208,7 +288,18 @@ function ExhibitionManagement() {
           ) : (
             filteredExhibitions.map((t) => {
               const meta = statusMeta[t.status] ?? statusMeta.planning;
-              const dateStr = t.created_at ? t.created_at.slice(0, 10) : "";
+              const createdStr = t.created_at ? t.created_at.slice(0, 10) : "";
+              // 起訖：兩端都有 → "2026/05/12 — 06/30"；單側 → "2026/05/12 起"；
+              // 都沒有 → 空字串（卡片自動 fallback 到建立日）
+              const fmt = (d: string | null) => (d ? d.replaceAll("-", "/") : "");
+              let dateRangeStr = "";
+              if (t.start_date && t.end_date) {
+                dateRangeStr = `${fmt(t.start_date)} — ${fmt(t.end_date).slice(5)}`;
+              } else if (t.start_date) {
+                dateRangeStr = `${fmt(t.start_date)} 起（常設）`;
+              } else if (t.end_date) {
+                dateRangeStr = `— ${fmt(t.end_date)}`;
+              }
               const isDeleting = deletingId === t.id;
 
               return (
@@ -251,8 +342,25 @@ function ExhibitionManagement() {
                     <p className="text-sm text-gray-500 line-clamp-2 mb-3 min-h-[2.5rem]">
                       {t.description || "—"}
                     </p>
+                    {/* 展期 + 地點：兩個都沒填時整列不出現，留視覺乾淨 */}
+                    {(dateRangeStr || t.location) && (
+                      <div className="text-xs text-gray-500 mb-2 space-y-1">
+                        {dateRangeStr && (
+                          <div className="flex items-center gap-1.5">
+                            <span aria-hidden>📅</span>
+                            <span>{dateRangeStr}</span>
+                          </div>
+                        )}
+                        {t.location && (
+                          <div className="flex items-center gap-1.5">
+                            <span aria-hidden>📍</span>
+                            <span className="truncate" title={t.location}>{t.location}</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
                     <div className="flex items-center justify-between text-xs text-gray-400">
-                      <span>建立於 {dateStr}</span>
+                      <span>建立於 {createdStr}</span>
                       <span>排序 {t.sort_order ?? 0}</span>
                     </div>
                     <div className="flex items-center justify-between mt-4 pt-3 border-t border-gray-100">
@@ -312,6 +420,9 @@ function ExhibitionModal({ mode, defaultSortOrder, onClose, onSaved }: Exhibitio
         coverImagePath: mode.exhibition.cover_image_path ?? "",
         sortOrder: mode.exhibition.sort_order ?? 0,
         status: mode.exhibition.status,
+        startDate: mode.exhibition.start_date ?? "",
+        endDate: mode.exhibition.end_date ?? "",
+        location: mode.exhibition.location ?? "",
       }
     : {
         name: "",
@@ -319,6 +430,9 @@ function ExhibitionModal({ mode, defaultSortOrder, onClose, onSaved }: Exhibitio
         coverImagePath: "",
         sortOrder: defaultSortOrder,
         status: "planning",
+        startDate: "",
+        endDate: "",
+        location: "",
       };
 
   const [form, setForm] = useState<ExhibitionInput>(initial);
@@ -333,6 +447,13 @@ function ExhibitionModal({ mode, defaultSortOrder, onClose, onSaved }: Exhibitio
       setSubmitError("展覽名稱為必填");
       return;
     }
+    // 起訖檢查：兩端都有時起 ≤ 訖；單一空一邊 OK（常設展只填 start_date）
+    const sd = form.startDate?.trim() ?? "";
+    const ed = form.endDate?.trim() ?? "";
+    if (sd && ed && sd > ed) {
+      setSubmitError("展期結束日不能早於起始日");
+      return;
+    }
     setSubmitting(true);
     setSubmitError(null);
     try {
@@ -342,6 +463,9 @@ function ExhibitionModal({ mode, defaultSortOrder, onClose, onSaved }: Exhibitio
         coverImagePath: form.coverImagePath?.trim() ?? "",
         sortOrder: typeof form.sortOrder === "number" ? form.sortOrder : 0,
         status: form.status,
+        startDate: sd,
+        endDate: ed,
+        location: form.location?.trim() ?? "",
       };
       if (isEdit) {
         await patchExhibition(mode.exhibition.id, payload);
@@ -444,6 +568,34 @@ function ExhibitionModal({ mode, defaultSortOrder, onClose, onSaved }: Exhibitio
               </select>
             </div>
           </div>
+          {/* 展期：起日 + 訖日 */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">展期起日</label>
+              <input
+                type="date"
+                value={form.startDate ?? ""}
+                onChange={(e) => setForm({ ...form, startDate: e.target.value })}
+                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+              />
+              <p className="text-xs text-gray-400 mt-1">前台依此判斷是否進行中</p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">展期迄日</label>
+              <input
+                type="date"
+                value={form.endDate ?? ""}
+                onChange={(e) => setForm({ ...form, endDate: e.target.value })}
+                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+              />
+              <p className="text-xs text-gray-400 mt-1">空白＝常設展</p>
+            </div>
+          </div>
+          {/* 地點：下拉選單（慈濟志業體）+ 「其他」切回自由輸入 */}
+          <VenueField
+            value={form.location ?? ""}
+            onChange={(v) => setForm({ ...form, location: v })}
+          />
           {submitError && (
             <div className="px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
               {submitError}
@@ -468,6 +620,76 @@ function ExhibitionModal({ mode, defaultSortOrder, onClose, onSaved }: Exhibitio
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── VenueField ───────────────────────────────────────────────────────────
+// 展出地點欄位：下拉選單 + 「其他」切回自由文字輸入。
+//
+// 設計考量：
+//   - DB 欄位仍是純 text；UI 只是把常用選項用 <select> 列出來，方便一致性。
+//   - 編輯既有展覽時，若 location 不在預設清單裡（例如海外場館或舊資料），
+//     會自動偵測 → fallback 到「其他」自由輸入模式，把原值塞進 text input，
+//     使用者不會看到值「不見了」。
+//   - 「其他」選了之後給 text input；切回任一預設選項則覆蓋字串。
+function VenueField({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  // 判斷目前值是否屬於預設清單；若不是則進入「其他」模式
+  const isCustom = value !== "" && !ALL_TZUCHI_VENUES.includes(value);
+  const [otherMode, setOtherMode] = useState(isCustom);
+
+  // 當外部 value 改變（例如切換到不同展覽的編輯 modal），重新評估模式
+  useEffect(() => {
+    setOtherMode(value !== "" && !ALL_TZUCHI_VENUES.includes(value));
+  }, [value]);
+
+  const selectValue = otherMode ? VENUE_OTHER_SENTINEL : value;
+
+  return (
+    <div>
+      <label className="block text-sm font-medium text-gray-700 mb-1.5">展出地點</label>
+      <select
+        value={selectValue}
+        onChange={(e) => {
+          const v = e.target.value;
+          if (v === VENUE_OTHER_SENTINEL) {
+            setOtherMode(true);
+            // 進入「其他」時不立即清空，使用者可能想沿用前一個值
+          } else {
+            setOtherMode(false);
+            onChange(v);
+          }
+        }}
+        className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+      >
+        <option value="">— 未指定 —</option>
+        {TZUCHI_VENUE_GROUPS.map((g) => (
+          <optgroup key={g.label} label={g.label}>
+            {g.venues.map((v) => (
+              <option key={v} value={v}>
+                {v}
+              </option>
+            ))}
+          </optgroup>
+        ))}
+        <option value={VENUE_OTHER_SENTINEL}>其他（自行輸入）…</option>
+      </select>
+      {otherMode && (
+        <input
+          type="text"
+          value={isCustom ? value : ""}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="例如：海外分會、學校禮堂、社區活動中心"
+          className="mt-2 w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+          autoFocus
+        />
+      )}
     </div>
   );
 }

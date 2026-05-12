@@ -18,8 +18,11 @@ export async function queryOne<T = unknown>(table: string, query: string): Promi
 // ── Exhibitions (展覽 CRUD) ──────────────────────────────────────────
 // 對應 production schema:
 //   public.exhibitions (id, name, cover_image_path, description, status,
-//                       sort_order, created_at, updated_at)
+//                       sort_order, start_date, end_date, location,
+//                       created_at, updated_at)
 //   status enum: planning | ongoing | finished
+//   start_date/end_date: ISO date "YYYY-MM-DD"; end_date 為 null/空字串 = 常設
+//   location: 純文字「台北靜思堂 / 花蓮靜思精舍」之類
 
 export type ExhibitionStatus = "planning" | "ongoing" | "finished";
 
@@ -29,6 +32,12 @@ export interface ExhibitionInput {
   coverImagePath?: string;
   sortOrder?: number;
   status: ExhibitionStatus;
+  /** ISO date "YYYY-MM-DD" — 空字串表示「未指定」(update 時會清空欄位) */
+  startDate?: string;
+  /** ISO date "YYYY-MM-DD" — 空字串/未提供 表示常設展（前端顯示「常設」） */
+  endDate?: string;
+  /** 展出地點純文字；空字串會清空 */
+  location?: string;
 }
 
 /** Create a new exhibition. Returns the created row's JSON (single-element array). */
@@ -39,6 +48,9 @@ export async function createExhibition(input: ExhibitionInput): Promise<string> 
     coverImagePath: input.coverImagePath ?? null,
     sortOrder: input.sortOrder ?? null,
     status: input.status,
+    startDate: input.startDate ?? null,
+    endDate: input.endDate ?? null,
+    location: input.location ?? null,
   });
 }
 
@@ -54,6 +66,9 @@ export async function patchExhibition(
     coverImagePath: patch.coverImagePath ?? null,
     sortOrder: patch.sortOrder ?? null,
     status: patch.status ?? null,
+    startDate: patch.startDate ?? null,
+    endDate: patch.endDate ?? null,
+    location: patch.location ?? null,
   });
 }
 
