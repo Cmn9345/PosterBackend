@@ -51,13 +51,38 @@ function ThemePosterManagement() {
     setError(null);
     try {
       // 管理模式撈全部（含 inactive）；瀏覽模式維持舊行為（只撈 active）。
-      const data = editMode
-        ? await listVocabularyThemesAdmin()
-        : await querySupabase<VocabularyTheme>(
-            "vocabulary_themes",
-            "is_active=eq.true&order=sort_order.asc",
-          );
-      setThemes(data);
+      // 並行拉所有 poster_files 的 themes 欄位，做唯一 poster 計數。
+      // `poster_count` 雖然在 schema 裡但沒任何 trigger / RPC 更新，
+      // 永遠是 0；客戶端算反而比寫 trigger 簡單，海報量在可預見的尺度
+      // 內（萬以下）也不需要伺服器端聚合。
+      const [data, files] = await Promise.all([
+        editMode
+          ? listVocabularyThemesAdmin()
+          : querySupabase<VocabularyTheme>(
+              "vocabulary_themes",
+              "is_active=eq.true&order=sort_order.asc",
+            ),
+        querySupabase<{ poster_id: string; themes: string[] | null }>(
+          "poster_files",
+          "select=poster_id,themes&themes=not.is.null&limit=10000",
+        ),
+      ]);
+
+      const postersByTheme = new Map<string, Set<string>>();
+      for (const f of files) {
+        if (!f.themes) continue;
+        for (const t of f.themes) {
+          if (!postersByTheme.has(t)) postersByTheme.set(t, new Set());
+          postersByTheme.get(t)!.add(f.poster_id);
+        }
+      }
+
+      setThemes(
+        data.map((t) => ({
+          ...t,
+          poster_count: postersByTheme.get(t.name)?.size ?? 0,
+        })),
+      );
     } catch (e) {
       setError(String(e));
     } finally {
