@@ -1032,6 +1032,89 @@ impl SupabaseClient {
         }
     }
 
+    /// Bulk-attach posters to an exhibition. `sort_order` for new rows starts
+    /// from `MAX(existing sort_order) + 1` so they land at the end.
+    /// Returns the count of rows actually inserted (already-attached posters
+    /// are silently skipped via `Prefer: resolution=ignore-duplicates`).
+    pub async fn attach_posters_to_exhibition(
+        &self,
+        exhibition_id: &str,
+        poster_ids: &[String],
+    ) -> Result<usize, String> {
+        if poster_ids.is_empty() {
+            return Ok(0);
+        }
+
+        // Step 1: discover current max sort_order for this exhibition.
+        let probe_url = format!(
+            "{}/rest/v1/exhibition_posters?exhibition_id=eq.{}\
+             &select=sort_order&order=sort_order.desc&limit=1",
+            self.url, exhibition_id
+        );
+        let key = self.bearer_key().await;
+        let probe = self
+            .client
+            .get(&probe_url)
+            .header("Authorization", format!("Bearer {}", key))
+            .header("apikey", &self.anon_key)
+            .send()
+            .await
+            .map_err(|e| format!("Probe sort_order failed: {}", e))?;
+        let probe_body = probe.text().await.unwrap_or_default();
+        let probe_json: serde_json::Value =
+            serde_json::from_str(&probe_body).unwrap_or(json!([]));
+        let base: i64 = probe_json
+            .as_array()
+            .and_then(|a| a.first())
+            .and_then(|o| o.get("sort_order"))
+            .and_then(|v| v.as_i64())
+            .unwrap_or(-1);
+
+        // Step 2: build rows.
+        let rows: Vec<serde_json::Value> = poster_ids
+            .iter()
+            .enumerate()
+            .map(|(i, pid)| {
+                json!({
+                    "exhibition_id": exhibition_id,
+                    "poster_id": pid,
+                    "sort_order": base + (i as i64) + 1,
+                })
+            })
+            .collect();
+
+        // Step 3: bulk insert with ignore-duplicates so PK conflicts are silent.
+        let insert_url = format!("{}/rest/v1/exhibition_posters", self.url);
+        let resp = self
+            .client
+            .post(&insert_url)
+            .header("Authorization", format!("Bearer {}", key))
+            .header("apikey", &self.anon_key)
+            .header("Content-Type", "application/json")
+            .header("Prefer", "resolution=ignore-duplicates,return=representation")
+            .body(serde_json::Value::Array(rows).to_string())
+            .send()
+            .await
+            .map_err(|e| format!("Attach posters failed: {}", e))?;
+
+        if resp.status().is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            let arr: serde_json::Value = serde_json::from_str(&text).unwrap_or(json!([]));
+            let inserted = arr.as_array().map(|a| a.len()).unwrap_or(0);
+            info!(
+                "[Supabase] Attached {} posters to exhibition {} ({} skipped as duplicates)",
+                inserted,
+                exhibition_id,
+                poster_ids.len() - inserted
+            );
+            Ok(inserted)
+        } else {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            Err(format!("Attach posters failed ({}): {}", status, text))
+        }
+    }
+
     /// Download raw bytes from Supabase Storage — needed by qwenpaw worker
     /// to pull the uploaded original before running metadata/thumbnail pipeline.
     pub async fn download_from_storage(

@@ -182,6 +182,23 @@ async fn list_posters_for_picker(
         .await
 }
 
+/// Attach posters to an exhibition. Already-attached posters are silently
+/// skipped. Returns the number of newly-attached rows.
+#[tauri::command]
+async fn attach_posters_to_exhibition(
+    state: tauri::State<'_, upload::UploadState>,
+    exhibition_id: String,
+    poster_ids: Vec<String>,
+) -> Result<usize, String> {
+    if exhibition_id.trim().is_empty() {
+        return Err("exhibition_id 不可為空".into());
+    }
+    state
+        .supabase_client
+        .attach_posters_to_exhibition(&exhibition_id, &poster_ids)
+        .await
+}
+
 /// Return a short-lived signed URL for a thumbnail stored in the
 /// `poster-thumbnails` bucket. Used by the review page to render previews.
 #[tauri::command]
@@ -362,6 +379,7 @@ pub fn run() {
             // Exhibition posters join table (Phase 2)
             list_exhibition_posters,
             list_posters_for_picker,
+            attach_posters_to_exhibition,
             // Generic Supabase query
             query_supabase,
         ])
