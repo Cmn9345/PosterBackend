@@ -976,6 +976,62 @@ impl SupabaseClient {
         }
     }
 
+    /// List posters available for attaching to an exhibition. Filtered by
+    /// status (typically `published` and `approved`). Optionally narrowed by
+    /// project_name substring search. Returns at most 200 rows.
+    ///
+    /// PostgREST request:
+    ///   GET /rest/v1/posters
+    ///     ?status=in.(published,approved)
+    ///     &select=id,project_name,status,poster_files(thumbnail_path)
+    ///     &order=updated_at.desc
+    ///     &limit=200
+    ///   (+ project_name=ilike.*search* when search provided)
+    pub async fn list_posters_for_picker(
+        &self,
+        status_filter: &[String],
+        search: Option<&str>,
+    ) -> Result<String, String> {
+        let statuses = if status_filter.is_empty() {
+            "published,approved".to_string()
+        } else {
+            status_filter.join(",")
+        };
+        let mut url = format!(
+            "{}/rest/v1/posters?status=in.({})\
+             &select=id,project_name,status,poster_files(thumbnail_path)\
+             &order=updated_at.desc&limit=200",
+            self.url, statuses
+        );
+        if let Some(q) = search.filter(|s| !s.is_empty()) {
+            // PostgREST `ilike` operator with `*` wildcards. URL-encode user input.
+            url.push_str(&format!(
+                "&project_name=ilike.*{}*",
+                urlencoding::encode(q)
+            ));
+        }
+        let key = self.bearer_key().await;
+        let resp = self
+            .client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", key))
+            .header("apikey", &self.anon_key)
+            .send()
+            .await
+            .map_err(|e| format!("List posters for picker failed: {}", e))?;
+
+        if resp.status().is_success() {
+            info!("[Supabase] Listed posters for picker (statuses={})", statuses);
+            resp.text()
+                .await
+                .map_err(|e| format!("Read picker body failed: {}", e))
+        } else {
+            let status_code = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            Err(format!("List posters for picker failed ({}): {}", status_code, text))
+        }
+    }
+
     /// Download raw bytes from Supabase Storage — needed by qwenpaw worker
     /// to pull the uploaded original before running metadata/thumbnail pipeline.
     pub async fn download_from_storage(

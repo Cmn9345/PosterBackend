@@ -168,6 +168,20 @@ async fn list_exhibition_posters(
         .await
 }
 
+/// List posters available for attaching to an exhibition.
+/// `status_filter` empty → defaults to published+approved on the backend.
+#[tauri::command]
+async fn list_posters_for_picker(
+    state: tauri::State<'_, upload::UploadState>,
+    status_filter: Vec<String>,
+    search: Option<String>,
+) -> Result<String, String> {
+    state
+        .supabase_client
+        .list_posters_for_picker(&status_filter, search.as_deref())
+        .await
+}
+
 /// Return a short-lived signed URL for a thumbnail stored in the
 /// `poster-thumbnails` bucket. Used by the review page to render previews.
 #[tauri::command]
@@ -347,6 +361,7 @@ pub fn run() {
             delete_exhibition,
             // Exhibition posters join table (Phase 2)
             list_exhibition_posters,
+            list_posters_for_picker,
             // Generic Supabase query
             query_supabase,
         ])
