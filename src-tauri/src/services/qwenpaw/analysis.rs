@@ -23,10 +23,15 @@ use crate::services::qwenpaw::vlm_local;
 const VLM_MAX_EDGE: u32 = 1536;
 const VLM_JPEG_QUALITY: u8 = 88;
 
-const THEME_LIST: &str =
+/// Used when Supabase is unreachable at analysis time — keeps the VLM
+/// classification operational with the original 12 themes. Kept in sync with
+/// migration 006 seed; if admin renames/adds/removes themes via the management
+/// UI, the dynamic fetch will pick up the changes — fallback only kicks in
+/// when the network is down.
+const FALLBACK_THEMES: &str =
     "朔源、慈善、醫療、教育、人文、環保、茹素護生、國際賑災、靜思語、大事記、法華坡道、年度主題";
 
-pub fn build_prompt() -> String {
+pub fn build_prompt(themes: &str) -> String {
     format!(
         r#"你是海報資料庫的 AI 分析員，請仔細觀察這張海報圖片並產生結構化分析，以 JSON 回傳。
 
@@ -55,8 +60,24 @@ Schema：
 - OCR 文字必須逐字保留，不要意譯或省略。
 - scores 五個維度都要有數字，0-100。
 - 只回傳 JSON，不要加任何 markdown 或註解。"#,
-        themes = THEME_LIST
+        themes = themes
     )
+}
+
+/// Fetch the current active theme list from Supabase, with hardcoded fallback
+/// so an outage doesn't break poster analysis.
+async fn resolve_theme_list(supabase: &crate::services::supabase::SupabaseClient) -> String {
+    match supabase.list_active_theme_names().await {
+        Ok(names) if !names.is_empty() => names.join("、"),
+        Ok(_) => {
+            warn!("[Analysis] vocabulary_themes returned empty; using fallback");
+            FALLBACK_THEMES.to_string()
+        }
+        Err(e) => {
+            warn!("[Analysis] fetch themes failed ({}); using fallback", e);
+            FALLBACK_THEMES.to_string()
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -131,6 +152,7 @@ pub async fn request_analysis(
     image_bytes: &[u8],
     filename: &str,
     vlm_base_url: Option<&str>,
+    supabase: &crate::services::supabase::SupabaseClient,
 ) -> AiAnalysis {
     let Some(base_url) = vlm_base_url else {
         warn!("[Analysis] VLM sidecar not available — skipping {}", file_id);
@@ -170,7 +192,8 @@ pub async fn request_analysis(
         prepared.len()
     );
 
-    let prompt = build_prompt();
+    let themes = resolve_theme_list(supabase).await;
+    let prompt = build_prompt(&themes);
 
     match vlm_local::analyze(base_url, &prepared, &prompt).await {
         Ok(value) => {

@@ -155,6 +155,178 @@ async fn delete_exhibition(
     state.supabase_client.delete_exhibition(&id).await
 }
 
+/// List posters attached to an exhibition, sorted by sort_order ascending.
+/// Returns raw JSON string of `[{poster_id, sort_order, posters: {...}}, ...]`.
+#[tauri::command]
+async fn list_exhibition_posters(
+    state: tauri::State<'_, upload::UploadState>,
+    exhibition_id: String,
+) -> Result<String, String> {
+    state
+        .supabase_client
+        .list_exhibition_posters(&exhibition_id)
+        .await
+}
+
+/// List posters available for attaching to an exhibition.
+/// `status_filter` empty → defaults to published+approved on the backend.
+#[tauri::command]
+async fn list_posters_for_picker(
+    state: tauri::State<'_, upload::UploadState>,
+    status_filter: Vec<String>,
+    search: Option<String>,
+) -> Result<String, String> {
+    state
+        .supabase_client
+        .list_posters_for_picker(&status_filter, search.as_deref())
+        .await
+}
+
+/// Attach posters to an exhibition. Already-attached posters are silently
+/// skipped. Returns the number of newly-attached rows.
+#[tauri::command]
+async fn attach_posters_to_exhibition(
+    state: tauri::State<'_, upload::UploadState>,
+    exhibition_id: String,
+    poster_ids: Vec<String>,
+) -> Result<usize, String> {
+    if exhibition_id.trim().is_empty() {
+        return Err("exhibition_id 不可為空".into());
+    }
+    state
+        .supabase_client
+        .attach_posters_to_exhibition(&exhibition_id, &poster_ids)
+        .await
+}
+
+/// Remove a poster from an exhibition. Idempotent.
+#[tauri::command]
+async fn detach_poster_from_exhibition(
+    state: tauri::State<'_, upload::UploadState>,
+    exhibition_id: String,
+    poster_id: String,
+) -> Result<(), String> {
+    state
+        .supabase_client
+        .detach_poster_from_exhibition(&exhibition_id, &poster_id)
+        .await
+}
+
+/// Rewrite sort_order for all posters attached to an exhibition. Input order
+/// = new order (0-based). Rejects if input ids differ from currently attached.
+#[tauri::command]
+async fn reorder_exhibition_posters(
+    state: tauri::State<'_, upload::UploadState>,
+    exhibition_id: String,
+    ordered_poster_ids: Vec<String>,
+) -> Result<(), String> {
+    state
+        .supabase_client
+        .reorder_exhibition_posters(&exhibition_id, &ordered_poster_ids)
+        .await
+}
+
+/// List all vocabulary_themes including inactive ones.
+#[tauri::command]
+async fn list_vocabulary_themes_admin(
+    state: tauri::State<'_, upload::UploadState>,
+) -> Result<String, String> {
+    state.supabase_client.list_vocabulary_themes_admin().await
+}
+
+/// Create a vocabulary_themes row.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn create_vocabulary_theme(
+    state: tauri::State<'_, upload::UploadState>,
+    name: String,
+    code: Option<String>,
+    icon: Option<String>,
+    color: Option<String>,
+    bg_color: Option<String>,
+    description: Option<String>,
+    cover_image: Option<String>,
+    sort_order: Option<i32>,
+    is_active: Option<bool>,
+) -> Result<String, String> {
+    if name.trim().is_empty() {
+        return Err("主題名稱不可為空".into());
+    }
+    state
+        .supabase_client
+        .insert_vocabulary_theme(
+            name.trim(),
+            code.as_deref(),
+            icon.as_deref(),
+            color.as_deref(),
+            bg_color.as_deref(),
+            description.as_deref(),
+            cover_image.as_deref(),
+            sort_order,
+            is_active.unwrap_or(true),
+        )
+        .await
+}
+
+/// Update a vocabulary_themes row via admin_rename_theme RPC. The RPC
+/// transactionally cascades into poster_files.themes when name changes.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn update_vocabulary_theme(
+    state: tauri::State<'_, upload::UploadState>,
+    id: String,
+    new_name: String,
+    code: Option<String>,
+    icon: Option<String>,
+    color: Option<String>,
+    bg_color: Option<String>,
+    description: Option<String>,
+    cover_image: Option<String>,
+    sort_order: Option<i32>,
+    is_active: Option<bool>,
+) -> Result<(), String> {
+    if new_name.trim().is_empty() {
+        return Err("主題名稱不可為空".into());
+    }
+    state
+        .supabase_client
+        .rpc_admin_rename_theme(
+            &id,
+            new_name.trim(),
+            code.as_deref(),
+            icon.as_deref(),
+            color.as_deref(),
+            bg_color.as_deref(),
+            description.as_deref(),
+            cover_image.as_deref(),
+            sort_order,
+            is_active,
+        )
+        .await
+}
+
+/// Delete a vocabulary_themes row via admin_delete_theme RPC.
+#[tauri::command]
+async fn delete_vocabulary_theme(
+    state: tauri::State<'_, upload::UploadState>,
+    id: String,
+) -> Result<(), String> {
+    state.supabase_client.rpc_admin_delete_theme(&id).await
+}
+
+/// Replace the themes array for a single poster_files row. Admin manual override.
+#[tauri::command]
+async fn update_poster_file_themes(
+    state: tauri::State<'_, upload::UploadState>,
+    file_id: String,
+    themes: Vec<String>,
+) -> Result<(), String> {
+    state
+        .supabase_client
+        .update_poster_file_themes(&file_id, &themes)
+        .await
+}
+
 /// Return a short-lived signed URL for a thumbnail stored in the
 /// `poster-thumbnails` bucket. Used by the review page to render previews.
 #[tauri::command]
@@ -332,6 +504,18 @@ pub fn run() {
             create_exhibition,
             patch_exhibition,
             delete_exhibition,
+            // Exhibition posters join table (Phase 2)
+            list_exhibition_posters,
+            list_posters_for_picker,
+            attach_posters_to_exhibition,
+            detach_poster_from_exhibition,
+            reorder_exhibition_posters,
+            // Vocabulary themes (PR-B)
+            list_vocabulary_themes_admin,
+            create_vocabulary_theme,
+            update_vocabulary_theme,
+            delete_vocabulary_theme,
+            update_poster_file_themes,
             // Generic Supabase query
             query_supabase,
         ])

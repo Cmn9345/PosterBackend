@@ -1,10 +1,9 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Plus, Search, ImageIcon, Loader2, Trash2 } from "lucide-react";
 import { useState, useEffect, useMemo, useCallback } from "react";
 import {
   querySupabase,
   createExhibition,
-  patchExhibition,
   deleteExhibition,
   type ExhibitionInput,
   type ExhibitionStatus,
@@ -108,8 +107,7 @@ interface Exhibition {
 
 type ModalMode =
   | { kind: "closed" }
-  | { kind: "create" }
-  | { kind: "edit"; exhibition: Exhibition };
+  | { kind: "create" };
 
 // 三種狀態的中文標籤 + 顏色配置
 const statusMeta: Record<
@@ -151,6 +149,7 @@ function formatMutationError(err: unknown): string {
 }
 
 function ExhibitionManagement() {
+  const navigate = useNavigate();
   const [modal, setModal] = useState<ModalMode>({ kind: "closed" });
   const [exhibitions, setExhibitions] = useState<Exhibition[]>([]);
   const [loading, setLoading] = useState(true);
@@ -365,7 +364,7 @@ function ExhibitionManagement() {
                     </div>
                     <div className="flex items-center justify-between mt-4 pt-3 border-t border-gray-100">
                       <button
-                        onClick={() => setModal({ kind: "edit", exhibition: t })}
+                        onClick={() => navigate({ to: "/exhibitions/$id/edit", params: { id: t.id } })}
                         className="text-sm font-medium text-primary hover:underline cursor-pointer"
                       >
                         編輯
@@ -406,40 +405,27 @@ function ExhibitionManagement() {
 // ── Modal component ─────────────────────────────────────────────────────
 
 interface ExhibitionModalProps {
-  mode: Exclude<ModalMode, { kind: "closed" }>;
+  mode: { kind: "create" };
   defaultSortOrder: number;
   onClose: () => void;
   onSaved: () => Promise<void> | void;
 }
 
-function ExhibitionModal({ mode, defaultSortOrder, onClose, onSaved }: ExhibitionModalProps) {
-  const initial: ExhibitionInput = mode.kind === "edit"
-    ? {
-        name: mode.exhibition.name,
-        description: mode.exhibition.description ?? "",
-        coverImagePath: mode.exhibition.cover_image_path ?? "",
-        sortOrder: mode.exhibition.sort_order ?? 0,
-        status: mode.exhibition.status,
-        startDate: mode.exhibition.start_date ?? "",
-        endDate: mode.exhibition.end_date ?? "",
-        location: mode.exhibition.location ?? "",
-      }
-    : {
-        name: "",
-        description: "",
-        coverImagePath: "",
-        sortOrder: defaultSortOrder,
-        status: "planning",
-        startDate: "",
-        endDate: "",
-        location: "",
-      };
+function ExhibitionModal({ defaultSortOrder, onClose, onSaved }: ExhibitionModalProps) {
+  const initial: ExhibitionInput = {
+    name: "",
+    description: "",
+    coverImagePath: "",
+    sortOrder: defaultSortOrder,
+    status: "planning",
+    startDate: "",
+    endDate: "",
+    location: "",
+  };
 
   const [form, setForm] = useState<ExhibitionInput>(initial);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
-
-  const isEdit = mode.kind === "edit";
 
   const handleSubmit = async () => {
     const trimmedName = form.name.trim();
@@ -467,11 +453,7 @@ function ExhibitionModal({ mode, defaultSortOrder, onClose, onSaved }: Exhibitio
         endDate: ed,
         location: form.location?.trim() ?? "",
       };
-      if (isEdit) {
-        await patchExhibition(mode.exhibition.id, payload);
-      } else {
-        await createExhibition(payload);
-      }
+      await createExhibition(payload);
       await onSaved();
     } catch (e) {
       setSubmitError(formatMutationError(e));
@@ -487,7 +469,7 @@ function ExhibitionModal({ mode, defaultSortOrder, onClose, onSaved }: Exhibitio
     >
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between sticky top-0 bg-white z-10">
-          <h3 className="text-lg font-bold text-gray-900">{isEdit ? "編輯展覽" : "新增展覽"}</h3>
+          <h3 className="text-lg font-bold text-gray-900">新增展覽</h3>
           <button
             onClick={onClose}
             disabled={submitting}
@@ -616,7 +598,7 @@ function ExhibitionModal({ mode, defaultSortOrder, onClose, onSaved }: Exhibitio
             className="px-6 py-2 text-sm text-white bg-primary rounded-lg hover:bg-primary-light cursor-pointer font-medium disabled:bg-primary/60 disabled:cursor-not-allowed flex items-center gap-2"
           >
             {submitting && <Loader2 className="w-4 h-4 animate-spin" />}
-            {isEdit ? "儲存變更" : "儲存"}
+            新增
           </button>
         </div>
       </div>
