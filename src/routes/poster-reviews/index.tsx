@@ -16,8 +16,20 @@ import {
 } from "lucide-react";
 import { querySupabase } from "../../lib/api";
 
+/**
+ * Optional `?id=<posterId>` deep-link — used by /exhibitions drawer to drop
+ * the user straight onto a specific review row. Validated loosely so an
+ * unknown / malformed id silently falls back to the default list view.
+ */
+interface ReviewsSearch {
+  id?: string;
+}
+
 export const Route = createFileRoute("/poster-reviews/")({
   component: PosterReviewsPage,
+  validateSearch: (raw: Record<string, unknown>): ReviewsSearch => ({
+    id: typeof raw.id === "string" && raw.id.length > 0 ? raw.id : undefined,
+  }),
 });
 
 /* ------------------------------------------------------------------ */
@@ -82,10 +94,17 @@ const SCORE_DIMENSIONS: { key: keyof AiScores; label: string }[] = [
 /* ------------------------------------------------------------------ */
 
 function PosterReviewsPage() {
+  // Deep-link via `?id=...` opens that poster's review pane directly.
+  const { id: deepLinkId } = Route.useSearch();
   const [posters, setPosters] = useState<PosterRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(deepLinkId ?? null);
+
+  // Sync state if the URL search param changes after mount (browser back/forward).
+  useEffect(() => {
+    if (deepLinkId) setSelectedId(deepLinkId);
+  }, [deepLinkId]);
 
   const fetchPending = useCallback(async () => {
     setLoading(true);
