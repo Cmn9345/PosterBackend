@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Plus, Search, ImageIcon, Loader2, Trash2 } from "lucide-react";
 import { useState, useEffect, useMemo, useCallback } from "react";
 import {
@@ -151,6 +151,7 @@ function formatMutationError(err: unknown): string {
 }
 
 function ExhibitionManagement() {
+  const navigate = useNavigate();
   const [modal, setModal] = useState<ModalMode>({ kind: "closed" });
   const [exhibitions, setExhibitions] = useState<Exhibition[]>([]);
   const [loading, setLoading] = useState(true);
@@ -365,7 +366,7 @@ function ExhibitionManagement() {
                     </div>
                     <div className="flex items-center justify-between mt-4 pt-3 border-t border-gray-100">
                       <button
-                        onClick={() => setModal({ kind: "edit", exhibition: t })}
+                        onClick={() => navigate({ to: "/exhibitions/$id/edit", params: { id: t.id } })}
                         className="text-sm font-medium text-primary hover:underline cursor-pointer"
                       >
                         編輯
@@ -412,6 +413,8 @@ interface ExhibitionModalProps {
   onSaved: () => Promise<void> | void;
 }
 
+// TODO(PR-B): ExhibitionModal `edit` 分支已遷至 /exhibitions/$id/edit，
+//             此 Modal 之後只用於 create。PR-A 暫留以縮小 diff。
 function ExhibitionModal({ mode, defaultSortOrder, onClose, onSaved }: ExhibitionModalProps) {
   const initial: ExhibitionInput = mode.kind === "edit"
     ? {
