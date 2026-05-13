@@ -1257,6 +1257,68 @@ impl SupabaseClient {
         }
     }
 
+    /// Fetch the active theme names (ordered by `sort_order`) for VLM prompt
+    /// injection. Returns `Err` on any HTTP / parsing failure so the caller can
+    /// fall back to a hardcoded list.
+    pub async fn list_active_theme_names(&self) -> Result<Vec<String>, String> {
+        let url = format!(
+            "{}/rest/v1/vocabulary_themes?is_active=eq.true&select=name&order=sort_order.asc",
+            self.url
+        );
+        let key = self.bearer_key().await;
+        let resp = self
+            .client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", key))
+            .header("apikey", &self.anon_key)
+            .send()
+            .await
+            .map_err(|e| format!("list_active_theme_names HTTP failed: {}", e))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(format!("list_active_theme_names ({}): {}", status, text));
+        }
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| format!("read body failed: {}", e))?;
+        #[derive(serde::Deserialize)]
+        struct Row {
+            name: String,
+        }
+        let rows: Vec<Row> = serde_json::from_str(&body)
+            .map_err(|e| format!("parse failed: {}", e))?;
+        Ok(rows.into_iter().map(|r| r.name).collect())
+    }
+
+    /// List all vocabulary_themes including inactive ones — for the admin
+    /// management page. Returns raw JSON to keep the Tauri command thin.
+    pub async fn list_vocabulary_themes_admin(&self) -> Result<String, String> {
+        let url = format!(
+            "{}/rest/v1/vocabulary_themes?select=*&order=sort_order.asc",
+            self.url
+        );
+        let key = self.bearer_key().await;
+        let resp = self
+            .client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", key))
+            .header("apikey", &self.anon_key)
+            .send()
+            .await
+            .map_err(|e| format!("list_vocabulary_themes_admin failed: {}", e))?;
+        if resp.status().is_success() {
+            resp.text()
+                .await
+                .map_err(|e| format!("read body failed: {}", e))
+        } else {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            Err(format!("list_vocabulary_themes_admin ({}): {}", status, text))
+        }
+    }
+
     /// Download raw bytes from Supabase Storage — needed by qwenpaw worker
     /// to pull the uploaded original before running metadata/thumbnail pipeline.
     pub async fn download_from_storage(
