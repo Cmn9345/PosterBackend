@@ -935,6 +935,47 @@ impl SupabaseClient {
         }
     }
 
+    /// List posters attached to an exhibition with sort_order, joined with
+    /// `posters.project_name/status` and the first `poster_files.thumbnail_path`.
+    /// Returns raw JSON text so the Tauri command can pipe it through unchanged.
+    ///
+    /// PostgREST request:
+    ///   GET /rest/v1/exhibition_posters
+    ///     ?exhibition_id=eq.{id}
+    ///     &select=poster_id,sort_order,posters(id,project_name,status,poster_files(thumbnail_path))
+    ///     &order=sort_order.asc
+    pub async fn list_exhibition_posters(
+        &self,
+        exhibition_id: &str,
+    ) -> Result<String, String> {
+        let url = format!(
+            "{}/rest/v1/exhibition_posters?exhibition_id=eq.{}\
+             &select=poster_id,sort_order,posters(id,project_name,status,poster_files(thumbnail_path))\
+             &order=sort_order.asc",
+            self.url, exhibition_id
+        );
+        let key = self.bearer_key().await;
+        let resp = self
+            .client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", key))
+            .header("apikey", &self.anon_key)
+            .send()
+            .await
+            .map_err(|e| format!("List exhibition_posters failed: {}", e))?;
+
+        if resp.status().is_success() {
+            info!("[Supabase] Listed exhibition_posters: {}", exhibition_id);
+            resp.text()
+                .await
+                .map_err(|e| format!("Read list_exhibition_posters body failed: {}", e))
+        } else {
+            let status_code = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            Err(format!("List exhibition_posters failed ({}): {}", status_code, text))
+        }
+    }
+
     /// Download raw bytes from Supabase Storage — needed by qwenpaw worker
     /// to pull the uploaded original before running metadata/thumbnail pipeline.
     pub async fn download_from_storage(

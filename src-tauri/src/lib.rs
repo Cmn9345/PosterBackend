@@ -155,6 +155,19 @@ async fn delete_exhibition(
     state.supabase_client.delete_exhibition(&id).await
 }
 
+/// List posters attached to an exhibition, sorted by sort_order ascending.
+/// Returns raw JSON string of `[{poster_id, sort_order, posters: {...}}, ...]`.
+#[tauri::command]
+async fn list_exhibition_posters(
+    state: tauri::State<'_, upload::UploadState>,
+    exhibition_id: String,
+) -> Result<String, String> {
+    state
+        .supabase_client
+        .list_exhibition_posters(&exhibition_id)
+        .await
+}
+
 /// Return a short-lived signed URL for a thumbnail stored in the
 /// `poster-thumbnails` bucket. Used by the review page to render previews.
 #[tauri::command]
@@ -332,6 +345,8 @@ pub fn run() {
             create_exhibition,
             patch_exhibition,
             delete_exhibition,
+            // Exhibition posters join table (Phase 2)
+            list_exhibition_posters,
             // Generic Supabase query
             query_supabase,
         ])
