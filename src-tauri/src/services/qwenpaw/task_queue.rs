@@ -216,6 +216,7 @@ async fn process_one(
             &bytes,
             &task.original_filename,
             vlm_base_url,
+            supabase,
         )
         .await;
         let ai_json = serde_json::to_value(&ai).unwrap_or(serde_json::json!({}));
