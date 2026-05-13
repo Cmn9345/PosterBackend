@@ -366,9 +366,24 @@ pub fn run() {
         Err(e) => log::warn!("[Migration] repair_orphan_project_files failed: {}", e),
     }
 
+    // Supabase config resolution order:
+    //   1. runtime env (dev: dotenvy loads src-tauri/.env)
+    //   2. compile-time env (production: baked in via `POSTER_SUPABASE_URL=…
+    //      npm run tauri build`)
+    //   3. hardcoded fallback for the URL only
+    // Anon key has no hardcoded fallback — if both 1 and 2 are missing the
+    // app starts but every Supabase call will 401, which is what we want:
+    // surface the misconfiguration loudly rather than silently no-op.
+    const COMPILE_URL: Option<&str> = option_env!("POSTER_SUPABASE_URL");
+    const COMPILE_KEY: Option<&str> = option_env!("POSTER_SUPABASE_ANON_KEY");
+
     let supabase_url = std::env::var("POSTER_SUPABASE_URL")
-        .unwrap_or_else(|_| "https://ptsupabase.tzuchi-org.tw".to_string());
+        .ok()
+        .or_else(|| COMPILE_URL.map(String::from))
+        .unwrap_or_else(|| "https://ptsupabase.tzuchi-org.tw".to_string());
     let supabase_key = std::env::var("POSTER_SUPABASE_ANON_KEY")
+        .ok()
+        .or_else(|| COMPILE_KEY.map(String::from))
         .unwrap_or_default();
 
     // Auth state — shares Supabase config, token shared with upload.
@@ -516,6 +531,9 @@ pub fn run() {
             update_vocabulary_theme,
             delete_vocabulary_theme,
             update_poster_file_themes,
+            // First-run model download (Qwen2-VL GGUFs ~2.2 GB)
+            commands::model_download::check_models,
+            commands::model_download::download_models_if_missing,
             // Generic Supabase query
             query_supabase,
         ])
