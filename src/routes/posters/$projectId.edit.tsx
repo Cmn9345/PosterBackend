@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { ChevronLeft, Save, FileIcon, Loader2, Sparkles, FileText, Send, Check, RefreshCw, RotateCcw } from "lucide-react";
 import { useQwenpawProgress } from "../../hooks/useQwenpawProgress";
 import { ProjectProgressPanel } from "../../components/ProjectProgressPanel";
+import { querySupabase, updatePosterFileThemes, type VocabularyTheme } from "../../lib/api";
 
 // 直接拼 Supabase Storage public URL,避免 supabase-js 在 Vite env 沒設時
 // createClient() 就丟 "supabaseKey is required" 把整頁炸白。
@@ -201,6 +202,25 @@ function EditProject() {
 
   const [project, setProject] = useState<Project | null>(null);
   const [files, setFiles] = useState<ProjectFile[]>([]);
+  const [activeThemes, setActiveThemes] = useState<VocabularyTheme[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await querySupabase<VocabularyTheme>(
+          "vocabulary_themes",
+          "is_active=eq.true&order=sort_order.asc",
+        );
+        if (!cancelled) setActiveThemes(data);
+      } catch (e) {
+        console.error("Failed to load themes:", e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Editable fields
   const [name, setName] = useState("");
@@ -810,15 +830,24 @@ function EditProject() {
                             {ai.description}
                           </p>
                         )}
+                          {/* themes chip toggle row (its own block) */}
+                          <ThemeChipToggles
+                            fileId={f.id}
+                            currentThemes={ai.themes ?? []}
+                            allActiveThemes={activeThemes}
+                            onUpdated={(next) => {
+                              setFiles((prev) =>
+                                prev.map((file) => {
+                                  if (file.id !== f.id) return file;
+                                  const parsed = tryParse<AiAnalysis>(file.ai_analysis) ?? {};
+                                  const updated = { ...parsed, themes: next };
+                                  return { ...file, ai_analysis: JSON.stringify(updated) };
+                                }),
+                              );
+                            }}
+                          />
+                          {/* remaining pills row */}
                           <div className="flex flex-wrap items-center gap-1.5">
-                            {ai.themes?.map((t) => (
-                              <span
-                                key={t}
-                                className="px-2 py-0.5 rounded-full text-xs bg-white border border-indigo-200 text-indigo-700"
-                              >
-                                {t}
-                              </span>
-                            ))}
                             {ai.language && (
                               <span className="px-2 py-0.5 rounded-full text-xs bg-white border border-gray-200 text-gray-600">
                                 {ai.language}
@@ -1015,6 +1044,74 @@ function MetaCell({
     <div className="flex flex-col">
       <dt className="text-[10px] text-gray-400 uppercase tracking-wide">{k}</dt>
       <dd className="text-gray-800">{v ?? "—"}</dd>
+    </div>
+  );
+}
+
+interface ThemeChipTogglesProps {
+  fileId: string;
+  currentThemes: string[];
+  allActiveThemes: VocabularyTheme[];
+  onUpdated: (next: string[]) => void;
+}
+
+function ThemeChipToggles({
+  fileId,
+  currentThemes,
+  allActiveThemes,
+  onUpdated,
+}: ThemeChipTogglesProps) {
+  const [saving, setSaving] = useState(false);
+
+  const toggle = async (name: string) => {
+    const isOn = currentThemes.includes(name);
+    const next = isOn
+      ? currentThemes.filter((t) => t !== name)
+      : [...currentThemes, name];
+    onUpdated(next); // optimistic
+    setSaving(true);
+    try {
+      await updatePosterFileThemes(fileId, next);
+    } catch (e) {
+      console.error("Update themes failed:", e);
+      alert(`儲存主題失敗：${e}`);
+      onUpdated(currentThemes); // rollback
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (allActiveThemes.length === 0) {
+    return <p className="text-xs text-gray-400">主題清單尚未載入…</p>;
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-gray-500">AI 主題（可手動調整）</span>
+        {saving && <Loader2 className="w-3 h-3 text-gray-400 animate-spin" />}
+      </div>
+      <div className="flex flex-wrap items-center gap-1.5">
+        {allActiveThemes.map((theme) => {
+          const active = currentThemes.includes(theme.name);
+          return (
+            <button
+              key={theme.id}
+              type="button"
+              onClick={() => toggle(theme.name)}
+              className={`px-2 py-0.5 rounded-full text-xs border cursor-pointer transition ${
+                active
+                  ? "bg-indigo-100 border-indigo-300 text-indigo-700"
+                  : "bg-white border-gray-200 text-gray-500 hover:border-indigo-200"
+              }`}
+            >
+              {active ? "✓ " : ""}
+              {theme.icon ? `${theme.icon} ` : ""}
+              {theme.name}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
