@@ -1440,6 +1440,37 @@ impl SupabaseClient {
         }
     }
 
+    /// Replace the `poster_files.themes` array for a single file. Used by the
+    /// manual classification chips in the poster edit page.
+    pub async fn update_poster_file_themes(
+        &self,
+        file_id: &str,
+        themes: &[String],
+    ) -> Result<(), String> {
+        let url = format!("{}/rest/v1/poster_files?id=eq.{}", self.url, file_id);
+        let key = self.bearer_key().await;
+        let body = json!({ "themes": themes });
+        let resp = self
+            .client
+            .patch(&url)
+            .header("Authorization", format!("Bearer {}", key))
+            .header("apikey", &self.anon_key)
+            .header("Content-Type", "application/json")
+            .header("Prefer", "return=minimal")
+            .body(body.to_string())
+            .send()
+            .await
+            .map_err(|e| format!("update_poster_file_themes failed: {}", e))?;
+        if resp.status().is_success() {
+            info!("[Supabase] Updated themes for file {}: {:?}", file_id, themes);
+            Ok(())
+        } else {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            Err(format!("update_poster_file_themes ({}): {}", status, text))
+        }
+    }
+
     /// Download raw bytes from Supabase Storage — needed by qwenpaw worker
     /// to pull the uploaded original before running metadata/thumbnail pipeline.
     pub async fn download_from_storage(

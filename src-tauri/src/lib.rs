@@ -314,6 +314,19 @@ async fn delete_vocabulary_theme(
     state.supabase_client.rpc_admin_delete_theme(&id).await
 }
 
+/// Replace the themes array for a single poster_files row. Admin manual override.
+#[tauri::command]
+async fn update_poster_file_themes(
+    state: tauri::State<'_, upload::UploadState>,
+    file_id: String,
+    themes: Vec<String>,
+) -> Result<(), String> {
+    state
+        .supabase_client
+        .update_poster_file_themes(&file_id, &themes)
+        .await
+}
+
 /// Return a short-lived signed URL for a thumbnail stored in the
 /// `poster-thumbnails` bucket. Used by the review page to render previews.
 #[tauri::command]
@@ -502,6 +515,7 @@ pub fn run() {
             create_vocabulary_theme,
             update_vocabulary_theme,
             delete_vocabulary_theme,
+            update_poster_file_themes,
             // Generic Supabase query
             query_supabase,
         ])
