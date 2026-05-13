@@ -199,6 +199,19 @@ async fn attach_posters_to_exhibition(
         .await
 }
 
+/// Remove a poster from an exhibition. Idempotent.
+#[tauri::command]
+async fn detach_poster_from_exhibition(
+    state: tauri::State<'_, upload::UploadState>,
+    exhibition_id: String,
+    poster_id: String,
+) -> Result<(), String> {
+    state
+        .supabase_client
+        .detach_poster_from_exhibition(&exhibition_id, &poster_id)
+        .await
+}
+
 /// Return a short-lived signed URL for a thumbnail stored in the
 /// `poster-thumbnails` bucket. Used by the review page to render previews.
 #[tauri::command]
@@ -380,6 +393,7 @@ pub fn run() {
             list_exhibition_posters,
             list_posters_for_picker,
             attach_posters_to_exhibition,
+            detach_poster_from_exhibition,
             // Generic Supabase query
             query_supabase,
         ])

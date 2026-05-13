@@ -1115,6 +1115,40 @@ impl SupabaseClient {
         }
     }
 
+    /// Remove a single poster from an exhibition. Idempotent — deleting a
+    /// non-existent (exhibition_id, poster_id) pair returns Ok(()), not an error.
+    pub async fn detach_poster_from_exhibition(
+        &self,
+        exhibition_id: &str,
+        poster_id: &str,
+    ) -> Result<(), String> {
+        let url = format!(
+            "{}/rest/v1/exhibition_posters?exhibition_id=eq.{}&poster_id=eq.{}",
+            self.url, exhibition_id, poster_id
+        );
+        let key = self.bearer_key().await;
+        let resp = self
+            .client
+            .delete(&url)
+            .header("Authorization", format!("Bearer {}", key))
+            .header("apikey", &self.anon_key)
+            .header("Prefer", "return=minimal")
+            .send()
+            .await
+            .map_err(|e| format!("Detach poster failed: {}", e))?;
+        if resp.status().is_success() {
+            info!(
+                "[Supabase] Detached poster {} from exhibition {}",
+                poster_id, exhibition_id
+            );
+            Ok(())
+        } else {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            Err(format!("Detach poster failed ({}): {}", status, text))
+        }
+    }
+
     /// Download raw bytes from Supabase Storage — needed by qwenpaw worker
     /// to pull the uploaded original before running metadata/thumbnail pipeline.
     pub async fn download_from_storage(
