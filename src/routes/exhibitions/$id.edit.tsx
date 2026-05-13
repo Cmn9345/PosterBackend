@@ -416,7 +416,6 @@ function ExhibitionEditPage() {
       {pickerOpen && (
         <PosterPickerModal
           alreadyAttached={alreadyAttached}
-          resolveThumbnail={(p) => resolveThumb(p.id, p.poster_files?.[0]?.id)}
           onClose={() => setPickerOpen(false)}
           onConfirm={handleAttachConfirm}
         />

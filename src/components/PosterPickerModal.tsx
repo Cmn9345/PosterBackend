@@ -1,4 +1,5 @@
 // src/components/PosterPickerModal.tsx
+import { invoke } from "@tauri-apps/api/core";
 import { Loader2, Search, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { listPostersForPicker, type PickerPoster } from "../lib/api";
@@ -6,10 +7,6 @@ import { listPostersForPicker, type PickerPoster } from "../lib/api";
 interface Props {
   /** poster ids already attached — disabled in the picker. */
   alreadyAttached: Set<string>;
-  /** Resolve a picker poster to its pre-signed thumbnail URL, or null if unavailable.
-   *  Caller reconstructs `{poster_id}/{file_id}_m.webp` since production schema
-   *  has no `thumbnail_path` column. */
-  resolveThumbnail: (poster: PickerPoster) => string | null;
   onClose: () => void;
   onConfirm: (posterIds: string[]) => void | Promise<void>;
 }
@@ -28,7 +25,6 @@ const statusOptions: Array<{ value: string; label: string }> = [
  */
 export function PosterPickerModal({
   alreadyAttached,
-  resolveThumbnail,
   onClose,
   onConfirm,
 }: Props) {
@@ -40,6 +36,7 @@ export function PosterPickerModal({
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [submitting, setSubmitting] = useState(false);
+  const [thumbCache, setThumbCache] = useState<Record<string, string | null>>({});
 
   // Debounce search 300ms.
   useEffect(() => {
@@ -67,6 +64,42 @@ export function PosterPickerModal({
       cancelled = true;
     };
   }, [statusFilter, debouncedSearch]);
+
+  // Sign thumbnails for newly-loaded rows. Path convention:
+  // `{posterId}/{fileId}_m.webp` inside `poster-thumbnails` bucket.
+  // Cached by full path string so re-renders don't re-sign.
+  useEffect(() => {
+    const paths = rows
+      .map((p) => {
+        const fileId = p.poster_files?.[0]?.id;
+        return fileId ? `${p.id}/${fileId}_m.webp` : null;
+      })
+      .filter((p): p is string => !!p && thumbCache[p] === undefined);
+    if (paths.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const entries = await Promise.all(
+        paths.map(async (path) => {
+          try {
+            const url = await invoke<string>("sign_thumbnail_url", { path });
+            return [path, url] as const;
+          } catch {
+            return [path, null] as const;
+          }
+        }),
+      );
+      if (!cancelled) {
+        setThumbCache((prev) => {
+          const next = { ...prev };
+          for (const [k, v] of entries) next[k] = v;
+          return next;
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [rows, thumbCache]);
 
   const toggleStatus = (v: string) => {
     setStatusFilter((prev) => (prev.includes(v) ? prev.filter((x) => x !== v) : [...prev, v]));
@@ -164,7 +197,8 @@ export function PosterPickerModal({
               {sortedRows.map((p) => {
                 const attached = alreadyAttached.has(p.id);
                 const isSelected = selected.has(p.id);
-                const thumb = resolveThumbnail(p);
+                const fileId = p.poster_files?.[0]?.id;
+                const thumb = fileId ? (thumbCache[`${p.id}/${fileId}_m.webp`] ?? null) : null;
                 return (
                   <label
                     key={p.id}
