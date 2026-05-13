@@ -76,3 +76,80 @@ export async function patchExhibition(
 export async function deleteExhibition(id: string): Promise<void> {
   return invoke<void>("delete_exhibition", { id });
 }
+
+// ── Exhibition posters (掛海報 — Phase 2) ─────────────────────────────
+
+/** 一張掛在展覽上的海報，含縮圖與狀態（從 list_exhibition_posters 解析）。 */
+export interface AttachedPoster {
+  poster_id: string;
+  sort_order: number;
+  posters: {
+    id: string;
+    project_name: string;
+    status: string;
+    poster_files?: Array<{ thumbnail_path: string | null }>;
+  } | null;
+}
+
+/** 海報庫選擇器用的縮表結構。 */
+export interface PickerPoster {
+  id: string;
+  project_name: string;
+  status: string;
+  poster_files?: Array<{ thumbnail_path: string | null }>;
+}
+
+/** List posters attached to an exhibition, ordered by sort_order ascending. */
+export async function listExhibitionPosters(
+  exhibitionId: string,
+): Promise<AttachedPoster[]> {
+  const raw = await invoke<string>("list_exhibition_posters", { exhibitionId });
+  const parsed = JSON.parse(raw);
+  return Array.isArray(parsed) ? (parsed as AttachedPoster[]) : [];
+}
+
+/** List candidate posters for the attach picker. `statusFilter` empty = backend default (published+approved). */
+export async function listPostersForPicker(
+  statusFilter: string[] = [],
+  search?: string,
+): Promise<PickerPoster[]> {
+  const raw = await invoke<string>("list_posters_for_picker", {
+    statusFilter,
+    search: search ?? null,
+  });
+  const parsed = JSON.parse(raw);
+  return Array.isArray(parsed) ? (parsed as PickerPoster[]) : [];
+}
+
+/** Attach posters to an exhibition. Already-attached are skipped silently. */
+export async function attachPostersToExhibition(
+  exhibitionId: string,
+  posterIds: string[],
+): Promise<number> {
+  return invoke<number>("attach_posters_to_exhibition", {
+    exhibitionId,
+    posterIds,
+  });
+}
+
+/** Detach a single poster from an exhibition. Idempotent. */
+export async function detachPosterFromExhibition(
+  exhibitionId: string,
+  posterId: string,
+): Promise<void> {
+  return invoke<void>("detach_poster_from_exhibition", {
+    exhibitionId,
+    posterId,
+  });
+}
+
+/** Rewrite sort_order: input array index = new sort_order. */
+export async function reorderExhibitionPosters(
+  exhibitionId: string,
+  orderedPosterIds: string[],
+): Promise<void> {
+  return invoke<void>("reorder_exhibition_posters", {
+    exhibitionId,
+    orderedPosterIds,
+  });
+}
