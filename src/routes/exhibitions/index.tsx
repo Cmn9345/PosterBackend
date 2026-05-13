@@ -1,27 +1,19 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Loader2, X, Search, FolderOpen } from "lucide-react";
-import { useState, useEffect, useMemo } from "react";
-import { querySupabase } from "../../lib/api";
+import { Loader2, X, Search, FolderOpen, Pencil, Plus, Trash2 } from "lucide-react";
+import { useState, useEffect, useMemo, useCallback } from "react";
+import {
+  listVocabularyThemesAdmin,
+  querySupabase,
+  type VocabularyTheme,
+} from "../../lib/api";
+import { ThemeEditModal } from "../../components/ThemeEditModal";
+import { ThemeDeleteConfirm } from "../../components/ThemeDeleteConfirm";
 
 export const Route = createFileRoute("/exhibitions/")({
   component: ThemePosterManagement,
 });
 
 // ── Types ───────────────────────────────────────────────────────────────
-
-/** Row from `vocabulary_themes` (Supabase migration 006). */
-interface VocabularyTheme {
-  id: string;
-  name: string;
-  code?: string;
-  description?: string;
-  icon?: string;
-  color?: string;
-  bg_color?: string;
-  poster_count?: number;
-  sort_order?: number;
-  is_active?: boolean;
-}
 
 /**
  * Row from `poster_files` joined with `posters`. Themes live as a Postgres
@@ -48,48 +40,80 @@ function ThemePosterManagement() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedTheme, setSelectedTheme] = useState<VocabularyTheme | null>(null);
+  const [editMode, setEditMode] = useState(false);
+  const [editingTheme, setEditingTheme] = useState<VocabularyTheme | null>(null);
+  const [creatingTheme, setCreatingTheme] = useState(false);
+  const [deleting, setDeleting] = useState<VocabularyTheme | null>(null);
+
+  const reload = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      // 管理模式撈全部（含 inactive）；瀏覽模式維持舊行為（只撈 active）。
+      const data = editMode
+        ? await listVocabularyThemesAdmin()
+        : await querySupabase<VocabularyTheme>(
+            "vocabulary_themes",
+            "is_active=eq.true&order=sort_order.asc",
+          );
+      setThemes(data);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, [editMode]);
 
   useEffect(() => {
-    let cancelled = false;
-    async function fetchThemes() {
-      setLoading(true);
-      setError(null);
-      try {
-        const data = await querySupabase<VocabularyTheme>(
-          "vocabulary_themes",
-          "is_active=eq.true&order=sort_order.asc",
-        );
-        if (!cancelled) setThemes(data);
-      } catch (e) {
-        if (!cancelled) setError(String(e));
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    }
-    fetchThemes();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    reload();
+  }, [reload]);
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
       {/* Header */}
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-primary">主題海報</h1>
-        <p className="text-sm text-gray-500 mt-1">
-          依 12 個固定主題（朔源 / 慈善 / 醫療 …）瀏覽底下收錄的海報。點任一卡片打開該主題的海報清單。
-        </p>
+      <div className="mb-6 flex items-start justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-primary">
+            主題海報{editMode && " · 管理模式"}
+          </h1>
+          <p className="text-sm text-gray-500 mt-1">
+            {editMode
+              ? "點任一卡編輯；卡的右下角可刪除。改名與刪除會自動處理已歸類海報。"
+              : "依 12 個主題瀏覽底下收錄的海報。"}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          {editMode && (
+            <button
+              onClick={() => setCreatingTheme(true)}
+              className="px-3 py-1.5 text-sm rounded-lg bg-primary text-white font-medium hover:bg-primary/90 cursor-pointer inline-flex items-center gap-1"
+            >
+              <Plus className="w-4 h-4" /> 新增主題
+            </button>
+          )}
+          <button
+            onClick={() => setEditMode((v) => !v)}
+            className={`px-3 py-1.5 text-sm rounded-lg cursor-pointer inline-flex items-center gap-1 ${
+              editMode
+                ? "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                : "border border-gray-200 text-gray-700 hover:border-primary/40"
+            }`}
+          >
+            {editMode ? "完成" : (
+              <>
+                <Pencil className="w-4 h-4" /> 編輯主題
+              </>
+            )}
+          </button>
+        </div>
       </div>
 
-      {/* Loading */}
+      {/* Loading / error 略，沿用既有版本 */}
       {loading && (
         <div className="flex items-center justify-center py-20">
           <Loader2 className="w-8 h-8 text-primary animate-spin" />
         </div>
       )}
-
-      {/* Error */}
       {error && (
         <div className="text-center py-12">
           <p className="text-red-500 text-sm mb-2">載入主題失敗</p>
@@ -108,10 +132,15 @@ function ThemePosterManagement() {
             </div>
           ) : (
             themes.map((t) => (
-              <button
+              <div
                 key={t.id}
-                onClick={() => setSelectedTheme(t)}
-                className="card-box p-5 text-left transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg cursor-pointer"
+                onClick={() => {
+                  if (editMode) setEditingTheme(t);
+                  else setSelectedTheme(t);
+                }}
+                className={`relative card-box p-5 text-left transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg cursor-pointer ${
+                  !t.is_active ? "opacity-50" : ""
+                }`}
                 style={{ backgroundColor: t.bg_color || "#f9fafb" }}
               >
                 <div className="flex items-start justify-between mb-3">
@@ -128,15 +157,51 @@ function ThemePosterManagement() {
                 <p className="text-xs text-gray-600 line-clamp-3 min-h-[3rem]">
                   {t.description || "—"}
                 </p>
-              </button>
+                {editMode && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDeleting(t);
+                    }}
+                    className="absolute bottom-3 right-3 p-1.5 rounded-md text-gray-400 hover:text-red-500 hover:bg-white/60 cursor-pointer"
+                    title="刪除主題"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
             ))
           )}
         </div>
       )}
 
-      {/* Drawer */}
-      {selectedTheme && (
+      {/* Drawer (browse mode only) */}
+      {!editMode && selectedTheme && (
         <ThemePosterDrawer theme={selectedTheme} onClose={() => setSelectedTheme(null)} />
+      )}
+
+      {/* Edit / create modals */}
+      {(editingTheme || creatingTheme) && (
+        <ThemeEditModal
+          initial={editingTheme}
+          onClose={() => {
+            setEditingTheme(null);
+            setCreatingTheme(false);
+          }}
+          onSaved={reload}
+        />
+      )}
+
+      {/* Delete confirm */}
+      {deleting && (
+        <ThemeDeleteConfirm
+          theme={deleting}
+          onClose={() => setDeleting(null)}
+          onConfirmed={() => {
+            setDeleting(null);
+            reload();
+          }}
+        />
       )}
     </div>
   );
