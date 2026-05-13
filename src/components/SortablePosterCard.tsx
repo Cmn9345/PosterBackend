@@ -6,7 +6,6 @@ import type { AttachedPoster } from "../lib/api";
 const statusPill: Record<string, { label: string; cls: string }> = {
   draft: { label: "草稿", cls: "bg-gray-100 text-gray-600" },
   pending_review: { label: "審核中", cls: "bg-amber-100 text-amber-700" },
-  approved: { label: "已通過", cls: "bg-emerald-100 text-emerald-700" },
   published: { label: "已發布", cls: "bg-green-100 text-green-700" },
   rejected: { label: "退件", cls: "bg-red-100 text-red-700" },
 };

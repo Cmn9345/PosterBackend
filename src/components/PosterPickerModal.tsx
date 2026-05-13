@@ -16,15 +16,15 @@ interface Props {
 
 const statusOptions: Array<{ value: string; label: string }> = [
   { value: "published", label: "已發布" },
-  { value: "approved", label: "已通過" },
   { value: "pending_review", label: "審核中" },
   { value: "draft", label: "草稿" },
+  { value: "rejected", label: "退件" },
 ];
 
 /**
  * Modal that lists candidate posters with search + status filter and lets
- * the user multi-select to attach. Defaults to status `published+approved`
- * per the spec (workers.dev only renders those anyway).
+ * the user multi-select to attach. Defaults to status `published` (the only
+ * "live" enum value in production; workers.dev only renders that anyway).
  */
 export function PosterPickerModal({
   alreadyAttached,
@@ -33,7 +33,7 @@ export function PosterPickerModal({
   onConfirm,
 }: Props) {
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string[]>(["published", "approved"]);
+  const [statusFilter, setStatusFilter] = useState<string[]>(["published"]);
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [rows, setRows] = useState<PickerPoster[]>([]);
   const [loading, setLoading] = useState(false);

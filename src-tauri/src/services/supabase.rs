@@ -981,7 +981,7 @@ impl SupabaseClient {
     }
 
     /// List posters available for attaching to an exhibition. Filtered by
-    /// status (typically `published` and `approved`). Optionally narrowed by
+    /// status (typically `published`). Optionally narrowed by
     /// project_name substring search. Returns at most 200 rows.
     ///
     /// The select fetches the first `poster_files.id` for client-side
@@ -992,7 +992,7 @@ impl SupabaseClient {
     ///
     /// PostgREST request:
     ///   GET /rest/v1/posters
-    ///     ?status=in.(published,approved)
+    ///     ?status=in.(published)
     ///     &select=id,project_name,status,poster_files(id)
     ///     &order=updated_at.desc
     ///     &limit=200
@@ -1003,7 +1003,9 @@ impl SupabaseClient {
         search: Option<&str>,
     ) -> Result<String, String> {
         let statuses = if status_filter.is_empty() {
-            "published,approved".to_string()
+            // poster_status enum has no `approved` — `published` is the only "live"
+            // state (see commands/review.rs APPROVED_STATUS for context).
+            "published".to_string()
         } else {
             status_filter.join(",")
         };
