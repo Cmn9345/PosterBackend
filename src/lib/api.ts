@@ -156,3 +156,85 @@ export async function reorderExhibitionPosters(
     orderedPosterIds,
   });
 }
+
+// ── Vocabulary themes (主題 CRUD — PR-B) ──────────────────────────────
+
+export interface VocabularyTheme {
+  id: string;
+  name: string;
+  code?: string | null;
+  description?: string | null;
+  icon?: string | null;
+  color?: string | null;
+  bg_color?: string | null;
+  cover_image?: string | null;
+  sort_order?: number | null;
+  is_active: boolean;
+  poster_count?: number | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface ThemePayload {
+  name: string;
+  code?: string;
+  icon?: string;
+  color?: string;
+  bgColor?: string;
+  description?: string;
+  coverImage?: string;
+  sortOrder?: number;
+  isActive?: boolean;
+}
+
+export async function listVocabularyThemesAdmin(): Promise<VocabularyTheme[]> {
+  const raw = await invoke<string>("list_vocabulary_themes_admin");
+  const parsed = JSON.parse(raw);
+  return Array.isArray(parsed) ? (parsed as VocabularyTheme[]) : [];
+}
+
+export async function createVocabularyTheme(input: ThemePayload): Promise<string> {
+  return invoke<string>("create_vocabulary_theme", {
+    name: input.name,
+    code: input.code ?? null,
+    icon: input.icon ?? null,
+    color: input.color ?? null,
+    bgColor: input.bgColor ?? null,
+    description: input.description ?? null,
+    coverImage: input.coverImage ?? null,
+    sortOrder: input.sortOrder ?? null,
+    isActive: input.isActive ?? true,
+  });
+}
+
+export async function updateVocabularyTheme(
+  id: string,
+  newName: string,
+  patch: Omit<ThemePayload, "name">,
+): Promise<void> {
+  return invoke<void>("update_vocabulary_theme", {
+    id,
+    newName,
+    code: patch.code ?? null,
+    icon: patch.icon ?? null,
+    color: patch.color ?? null,
+    bgColor: patch.bgColor ?? null,
+    description: patch.description ?? null,
+    coverImage: patch.coverImage ?? null,
+    sortOrder: patch.sortOrder ?? null,
+    isActive: patch.isActive ?? null,
+  });
+}
+
+export async function deleteVocabularyTheme(id: string): Promise<void> {
+  return invoke<void>("delete_vocabulary_theme", { id });
+}
+
+// ── Manual classification (海報手動歸類) ──────────────────────────────
+
+export async function updatePosterFileThemes(
+  fileId: string,
+  themes: string[],
+): Promise<void> {
+  return invoke<void>("update_poster_file_themes", { fileId, themes });
+}
