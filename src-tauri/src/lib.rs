@@ -226,6 +226,94 @@ async fn reorder_exhibition_posters(
         .await
 }
 
+/// List all vocabulary_themes including inactive ones.
+#[tauri::command]
+async fn list_vocabulary_themes_admin(
+    state: tauri::State<'_, upload::UploadState>,
+) -> Result<String, String> {
+    state.supabase_client.list_vocabulary_themes_admin().await
+}
+
+/// Create a vocabulary_themes row.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn create_vocabulary_theme(
+    state: tauri::State<'_, upload::UploadState>,
+    name: String,
+    code: Option<String>,
+    icon: Option<String>,
+    color: Option<String>,
+    bg_color: Option<String>,
+    description: Option<String>,
+    cover_image: Option<String>,
+    sort_order: Option<i32>,
+    is_active: Option<bool>,
+) -> Result<String, String> {
+    if name.trim().is_empty() {
+        return Err("主題名稱不可為空".into());
+    }
+    state
+        .supabase_client
+        .insert_vocabulary_theme(
+            name.trim(),
+            code.as_deref(),
+            icon.as_deref(),
+            color.as_deref(),
+            bg_color.as_deref(),
+            description.as_deref(),
+            cover_image.as_deref(),
+            sort_order,
+            is_active.unwrap_or(true),
+        )
+        .await
+}
+
+/// Update a vocabulary_themes row via admin_rename_theme RPC. The RPC
+/// transactionally cascades into poster_files.themes when name changes.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn update_vocabulary_theme(
+    state: tauri::State<'_, upload::UploadState>,
+    id: String,
+    new_name: String,
+    code: Option<String>,
+    icon: Option<String>,
+    color: Option<String>,
+    bg_color: Option<String>,
+    description: Option<String>,
+    cover_image: Option<String>,
+    sort_order: Option<i32>,
+    is_active: Option<bool>,
+) -> Result<(), String> {
+    if new_name.trim().is_empty() {
+        return Err("主題名稱不可為空".into());
+    }
+    state
+        .supabase_client
+        .rpc_admin_rename_theme(
+            &id,
+            new_name.trim(),
+            code.as_deref(),
+            icon.as_deref(),
+            color.as_deref(),
+            bg_color.as_deref(),
+            description.as_deref(),
+            cover_image.as_deref(),
+            sort_order,
+            is_active,
+        )
+        .await
+}
+
+/// Delete a vocabulary_themes row via admin_delete_theme RPC.
+#[tauri::command]
+async fn delete_vocabulary_theme(
+    state: tauri::State<'_, upload::UploadState>,
+    id: String,
+) -> Result<(), String> {
+    state.supabase_client.rpc_admin_delete_theme(&id).await
+}
+
 /// Return a short-lived signed URL for a thumbnail stored in the
 /// `poster-thumbnails` bucket. Used by the review page to render previews.
 #[tauri::command]
@@ -409,6 +497,11 @@ pub fn run() {
             attach_posters_to_exhibition,
             detach_poster_from_exhibition,
             reorder_exhibition_posters,
+            // Vocabulary themes (PR-B)
+            list_vocabulary_themes_admin,
+            create_vocabulary_theme,
+            update_vocabulary_theme,
+            delete_vocabulary_theme,
             // Generic Supabase query
             query_supabase,
         ])

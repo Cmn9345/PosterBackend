@@ -1319,6 +1319,127 @@ impl SupabaseClient {
         }
     }
 
+    /// Insert a new vocabulary_themes row. Returns the inserted row JSON so
+    /// frontend can splice without re-fetch.
+    pub async fn insert_vocabulary_theme(
+        &self,
+        name: &str,
+        code: Option<&str>,
+        icon: Option<&str>,
+        color: Option<&str>,
+        bg_color: Option<&str>,
+        description: Option<&str>,
+        cover_image: Option<&str>,
+        sort_order: Option<i32>,
+        is_active: bool,
+    ) -> Result<String, String> {
+        let mut body = json!({
+            "name": name,
+            "is_active": is_active,
+        });
+        if let Some(v) = code.filter(|s| !s.is_empty())        { body["code"]        = json!(v); }
+        if let Some(v) = icon.filter(|s| !s.is_empty())        { body["icon"]        = json!(v); }
+        if let Some(v) = color.filter(|s| !s.is_empty())       { body["color"]       = json!(v); }
+        if let Some(v) = bg_color.filter(|s| !s.is_empty())    { body["bg_color"]    = json!(v); }
+        if let Some(v) = description.filter(|s| !s.is_empty()) { body["description"] = json!(v); }
+        if let Some(v) = cover_image.filter(|s| !s.is_empty()) { body["cover_image"] = json!(v); }
+        if let Some(o) = sort_order { body["sort_order"] = json!(o); }
+
+        let url = format!("{}/rest/v1/vocabulary_themes", self.url);
+        let key = self.bearer_key().await;
+        let resp = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", key))
+            .header("apikey", &self.anon_key)
+            .header("Content-Type", "application/json")
+            .header("Prefer", "return=representation")
+            .body(body.to_string())
+            .send()
+            .await
+            .map_err(|e| format!("Insert vocabulary_theme failed: {}", e))?;
+        if resp.status().is_success() || resp.status().as_u16() == 201 {
+            resp.text().await.map_err(|e| format!("read body: {}", e))
+        } else {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            Err(format!("Insert vocabulary_theme ({}): {}", status, text))
+        }
+    }
+
+    /// Call admin_rename_theme RPC. Pass through all editable fields; the SQL
+    /// function uses COALESCE so `None` keeps existing values.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn rpc_admin_rename_theme(
+        &self,
+        id: &str,
+        new_name: &str,
+        code: Option<&str>,
+        icon: Option<&str>,
+        color: Option<&str>,
+        bg_color: Option<&str>,
+        description: Option<&str>,
+        cover_image: Option<&str>,
+        sort_order: Option<i32>,
+        is_active: Option<bool>,
+    ) -> Result<(), String> {
+        let mut body = json!({
+            "p_id": id,
+            "p_new_name": new_name,
+        });
+        if let Some(v) = code        { body["p_code"]        = json!(v); }
+        if let Some(v) = icon        { body["p_icon"]        = json!(v); }
+        if let Some(v) = color       { body["p_color"]       = json!(v); }
+        if let Some(v) = bg_color    { body["p_bg_color"]    = json!(v); }
+        if let Some(v) = description { body["p_description"] = json!(v); }
+        if let Some(v) = cover_image { body["p_cover_image"] = json!(v); }
+        if let Some(o) = sort_order  { body["p_sort_order"]  = json!(o); }
+        if let Some(a) = is_active   { body["p_is_active"]   = json!(a); }
+
+        let url = format!("{}/rest/v1/rpc/admin_rename_theme", self.url);
+        let key = self.bearer_key().await;
+        let resp = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", key))
+            .header("apikey", &self.anon_key)
+            .header("Content-Type", "application/json")
+            .body(body.to_string())
+            .send()
+            .await
+            .map_err(|e| format!("admin_rename_theme RPC failed: {}", e))?;
+        if resp.status().is_success() {
+            Ok(())
+        } else {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            Err(format!("admin_rename_theme ({}): {}", status, text))
+        }
+    }
+
+    /// Call admin_delete_theme RPC.
+    pub async fn rpc_admin_delete_theme(&self, id: &str) -> Result<(), String> {
+        let url = format!("{}/rest/v1/rpc/admin_delete_theme", self.url);
+        let key = self.bearer_key().await;
+        let resp = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", key))
+            .header("apikey", &self.anon_key)
+            .header("Content-Type", "application/json")
+            .body(json!({ "p_id": id }).to_string())
+            .send()
+            .await
+            .map_err(|e| format!("admin_delete_theme RPC failed: {}", e))?;
+        if resp.status().is_success() {
+            Ok(())
+        } else {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            Err(format!("admin_delete_theme ({}): {}", status, text))
+        }
+    }
+
     /// Download raw bytes from Supabase Storage — needed by qwenpaw worker
     /// to pull the uploaded original before running metadata/thumbnail pipeline.
     pub async fn download_from_storage(
