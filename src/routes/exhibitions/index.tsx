@@ -138,37 +138,70 @@ function ThemePosterManagement() {
                   if (editMode) setEditingTheme(t);
                   else setSelectedTheme(t);
                 }}
-                className={`relative card-box p-5 text-left transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg cursor-pointer ${
+                className={`relative card-box overflow-hidden text-left transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg cursor-pointer ${
                   !t.is_active ? "opacity-50" : ""
                 }`}
-                style={{ backgroundColor: t.bg_color || "#f9fafb" }}
               >
-                <div className="flex items-start justify-between mb-3">
-                  <span className="text-3xl" aria-hidden>
-                    {t.icon || "📁"}
-                  </span>
-                  <span className="px-2 py-0.5 text-xs font-semibold rounded-full bg-white/80 text-gray-700">
-                    {t.poster_count ?? 0} 張
-                  </span>
-                </div>
-                <h3 className="text-lg font-bold mb-1" style={{ color: t.color || "#1f2937" }}>
-                  {t.name}
-                </h3>
-                <p className="text-xs text-gray-600 line-clamp-3 min-h-[3rem]">
-                  {t.description || "—"}
-                </p>
-                {editMode && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setDeleting(t);
-                    }}
-                    className="absolute bottom-3 right-3 p-1.5 rounded-md text-gray-400 hover:text-red-500 hover:bg-white/60 cursor-pointer"
-                    title="刪除主題"
+                {/* Banner image header — title 已內嵌於圖，下方文字僅留描述 */}
+                {t.cover_image ? (
+                  <div
+                    className="relative aspect-[16/9] w-full"
+                    style={{ backgroundColor: t.bg_color || "#f9fafb" }}
                   >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                    <img
+                      src={t.cover_image}
+                      alt={t.name}
+                      loading="lazy"
+                      className="w-full h-full object-cover"
+                    />
+                    <span className="absolute top-3 right-3 px-2 py-0.5 text-xs font-semibold rounded-full bg-white/90 text-gray-800 shadow-sm">
+                      {t.poster_count ?? 0} 張
+                    </span>
+                  </div>
+                ) : (
+                  <div
+                    className="flex items-start justify-between p-5"
+                    style={{ backgroundColor: t.bg_color || "#f9fafb" }}
+                  >
+                    <span className="text-3xl" aria-hidden>
+                      {t.icon || "📁"}
+                    </span>
+                    <span className="px-2 py-0.5 text-xs font-semibold rounded-full bg-white/80 text-gray-700">
+                      {t.poster_count ?? 0} 張
+                    </span>
+                  </div>
                 )}
+
+                {/* Caption — 描述（編輯模式留垃圾桶位置）*/}
+                <div className="relative px-4 pt-3 pb-10">
+                  {/* When the banner already shows the name, keep it in DOM
+                      for screen readers / search but visually hidden. */}
+                  {t.cover_image ? (
+                    <h3 className="sr-only">{t.name}</h3>
+                  ) : (
+                    <h3
+                      className="text-lg font-bold mb-1"
+                      style={{ color: t.color || "#1f2937" }}
+                    >
+                      {t.name}
+                    </h3>
+                  )}
+                  <p className="text-xs text-gray-600 line-clamp-3 min-h-[3rem]">
+                    {t.description || "—"}
+                  </p>
+                  {editMode && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setDeleting(t);
+                      }}
+                      className="absolute bottom-2 right-3 p-1.5 rounded-md text-gray-400 hover:text-red-500 hover:bg-white/60 cursor-pointer"
+                      title="刪除主題"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
               </div>
             ))
           )}
