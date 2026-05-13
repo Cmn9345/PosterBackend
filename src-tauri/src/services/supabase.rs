@@ -1149,6 +1149,102 @@ impl SupabaseClient {
         }
     }
 
+    /// Rewrite the sort_order of every poster attached to an exhibition.
+    /// The input array's index becomes the new sort_order (0-based).
+    ///
+    /// Validates that the input ids match exactly the currently-attached set —
+    /// adding or dropping posters here is rejected with 400 to keep semantics
+    /// clean (use attach/detach for that).
+    ///
+    /// PostgREST UPSERT: POST with `Prefer: resolution=merge-duplicates` on the
+    /// composite PK (exhibition_id, poster_id) → existing rows get sort_order
+    /// updated, no-op for unchanged rows.
+    pub async fn reorder_exhibition_posters(
+        &self,
+        exhibition_id: &str,
+        ordered_poster_ids: &[String],
+    ) -> Result<(), String> {
+        if ordered_poster_ids.is_empty() {
+            return Ok(());
+        }
+
+        // Validate: input ids must equal currently-attached set.
+        let probe_url = format!(
+            "{}/rest/v1/exhibition_posters?exhibition_id=eq.{}&select=poster_id",
+            self.url, exhibition_id
+        );
+        let key = self.bearer_key().await;
+        let probe = self
+            .client
+            .get(&probe_url)
+            .header("Authorization", format!("Bearer {}", key))
+            .header("apikey", &self.anon_key)
+            .send()
+            .await
+            .map_err(|e| format!("Probe reorder set failed: {}", e))?;
+        let probe_text = probe.text().await.unwrap_or_default();
+        let existing: Vec<String> = serde_json::from_str::<serde_json::Value>(&probe_text)
+            .ok()
+            .and_then(|v| v.as_array().cloned())
+            .map(|arr| {
+                arr.into_iter()
+                    .filter_map(|o| o.get("poster_id").and_then(|s| s.as_str()).map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let mut input_sorted: Vec<&String> = ordered_poster_ids.iter().collect();
+        input_sorted.sort();
+        let mut existing_sorted: Vec<&String> = existing.iter().collect();
+        existing_sorted.sort();
+        if input_sorted != existing_sorted {
+            return Err(format!(
+                "Reorder mismatch: input has {} ids, exhibition has {} attached",
+                ordered_poster_ids.len(),
+                existing.len()
+            ));
+        }
+
+        // Build upsert payload.
+        let rows: Vec<serde_json::Value> = ordered_poster_ids
+            .iter()
+            .enumerate()
+            .map(|(i, pid)| {
+                json!({
+                    "exhibition_id": exhibition_id,
+                    "poster_id": pid,
+                    "sort_order": i as i32,
+                })
+            })
+            .collect();
+
+        let url = format!("{}/rest/v1/exhibition_posters", self.url);
+        let resp = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", key))
+            .header("apikey", &self.anon_key)
+            .header("Content-Type", "application/json")
+            .header("Prefer", "resolution=merge-duplicates,return=minimal")
+            .body(serde_json::Value::Array(rows).to_string())
+            .send()
+            .await
+            .map_err(|e| format!("Reorder failed: {}", e))?;
+
+        if resp.status().is_success() {
+            info!(
+                "[Supabase] Reordered {} posters for exhibition {}",
+                ordered_poster_ids.len(),
+                exhibition_id
+            );
+            Ok(())
+        } else {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            Err(format!("Reorder failed ({}): {}", status, text))
+        }
+    }
+
     /// Download raw bytes from Supabase Storage — needed by qwenpaw worker
     /// to pull the uploaded original before running metadata/thumbnail pipeline.
     pub async fn download_from_storage(

@@ -212,6 +212,20 @@ async fn detach_poster_from_exhibition(
         .await
 }
 
+/// Rewrite sort_order for all posters attached to an exhibition. Input order
+/// = new order (0-based). Rejects if input ids differ from currently attached.
+#[tauri::command]
+async fn reorder_exhibition_posters(
+    state: tauri::State<'_, upload::UploadState>,
+    exhibition_id: String,
+    ordered_poster_ids: Vec<String>,
+) -> Result<(), String> {
+    state
+        .supabase_client
+        .reorder_exhibition_posters(&exhibition_id, &ordered_poster_ids)
+        .await
+}
+
 /// Return a short-lived signed URL for a thumbnail stored in the
 /// `poster-thumbnails` bucket. Used by the review page to render previews.
 #[tauri::command]
@@ -394,6 +408,7 @@ pub fn run() {
             list_posters_for_picker,
             attach_posters_to_exhibition,
             detach_poster_from_exhibition,
+            reorder_exhibition_posters,
             // Generic Supabase query
             query_supabase,
         ])
