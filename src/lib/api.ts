@@ -79,7 +79,9 @@ export async function deleteExhibition(id: string): Promise<void> {
 
 // ── Exhibition posters (掛海報 — Phase 2) ─────────────────────────────
 
-/** 一張掛在展覽上的海報，含縮圖與狀態（從 list_exhibition_posters 解析）。 */
+/** 一張掛在展覽上的海報，含縮圖與狀態（從 list_exhibition_posters 解析）。
+ *  Note: production schema has no `thumbnail_path`; we carry `poster_files[].id`
+ *  and reconstruct `{poster_id}/{file_id}_m.webp` on the frontend. */
 export interface AttachedPoster {
   poster_id: string;
   sort_order: number;
@@ -87,16 +89,17 @@ export interface AttachedPoster {
     id: string;
     project_name: string;
     status: string;
-    poster_files?: Array<{ thumbnail_path: string | null }>;
+    poster_files?: Array<{ id: string }>;
   } | null;
 }
 
-/** 海報庫選擇器用的縮表結構。 */
+/** 海報庫選擇器用的縮表結構。
+ *  Note: production schema has no `thumbnail_path`; see `AttachedPoster`. */
 export interface PickerPoster {
   id: string;
   project_name: string;
   status: string;
-  poster_files?: Array<{ thumbnail_path: string | null }>;
+  poster_files?: Array<{ id: string }>;
 }
 
 /** List posters attached to an exhibition, ordered by sort_order ascending. */

@@ -936,13 +936,17 @@ impl SupabaseClient {
     }
 
     /// List posters attached to an exhibition with sort_order, joined with
-    /// `posters.project_name/status` and the first `poster_files.thumbnail_path`.
+    /// `posters.project_name/status` and the first `poster_files.id` for
+    /// client-side thumbnail path construction (production schema has no
+    /// `thumbnail_path` column — see comment at `update_file_metadata`; the
+    /// canonical Rust naming convention `{poster_id}/{file_id}_m.webp` is
+    /// rebuilt on the frontend and signed via `sign_thumbnail_url`).
     /// Returns raw JSON text so the Tauri command can pipe it through unchanged.
     ///
     /// PostgREST request:
     ///   GET /rest/v1/exhibition_posters
     ///     ?exhibition_id=eq.{id}
-    ///     &select=poster_id,sort_order,posters(id,project_name,status,poster_files(thumbnail_path))
+    ///     &select=poster_id,sort_order,posters(id,project_name,status,poster_files(id))
     ///     &order=sort_order.asc
     pub async fn list_exhibition_posters(
         &self,
@@ -950,7 +954,7 @@ impl SupabaseClient {
     ) -> Result<String, String> {
         let url = format!(
             "{}/rest/v1/exhibition_posters?exhibition_id=eq.{}\
-             &select=poster_id,sort_order,posters(id,project_name,status,poster_files(thumbnail_path))\
+             &select=poster_id,sort_order,posters(id,project_name,status,poster_files(id))\
              &order=sort_order.asc",
             self.url, exhibition_id
         );
@@ -980,10 +984,16 @@ impl SupabaseClient {
     /// status (typically `published` and `approved`). Optionally narrowed by
     /// project_name substring search. Returns at most 200 rows.
     ///
+    /// The select fetches the first `poster_files.id` for client-side
+    /// thumbnail path construction (production schema has no
+    /// `thumbnail_path` column — see comment at `update_file_metadata`;
+    /// frontend rebuilds `{poster_id}/{file_id}_m.webp` and signs via
+    /// `sign_thumbnail_url`).
+    ///
     /// PostgREST request:
     ///   GET /rest/v1/posters
     ///     ?status=in.(published,approved)
-    ///     &select=id,project_name,status,poster_files(thumbnail_path)
+    ///     &select=id,project_name,status,poster_files(id)
     ///     &order=updated_at.desc
     ///     &limit=200
     ///   (+ project_name=ilike.*search* when search provided)
@@ -999,7 +1009,7 @@ impl SupabaseClient {
         };
         let mut url = format!(
             "{}/rest/v1/posters?status=in.({})\
-             &select=id,project_name,status,poster_files(thumbnail_path)\
+             &select=id,project_name,status,poster_files(id)\
              &order=updated_at.desc&limit=200",
             self.url, statuses
         );

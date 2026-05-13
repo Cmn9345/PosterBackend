@@ -89,11 +89,16 @@ function ExhibitionEditPage() {
   }, [reload]);
 
   // ── Thumbnail signing (lazy + memoized) ──
-  // poster_files.thumbnail_path is a Storage object key, not a URL. We pre-sign
-  // each one once and cache.
+  // Production schema has no `poster_files.thumbnail_path`; we reconstruct the
+  // Storage object key from the canonical Rust naming convention
+  // `{poster_id}/{file_id}_m.webp`, pre-sign each one once, and cache by path.
   useEffect(() => {
     const missing = attached
-      .map((a) => a.posters?.poster_files?.[0]?.thumbnail_path)
+      .map((a) => {
+        const posterId = a.posters?.id;
+        const fileId = a.posters?.poster_files?.[0]?.id;
+        return posterId && fileId ? `${posterId}/${fileId}_m.webp` : null;
+      })
       .filter((p): p is string => !!p && thumbCache[p] === undefined);
     if (missing.length === 0) return;
     let cancelled = false;
@@ -122,9 +127,9 @@ function ExhibitionEditPage() {
   }, [attached, thumbCache]);
 
   const resolveThumb = useCallback(
-    (path: string | null | undefined) => {
-      if (!path) return null;
-      return thumbCache[path] ?? null;
+    (posterId: string | undefined, fileId: string | undefined) => {
+      if (!posterId || !fileId) return null;
+      return thumbCache[`${posterId}/${fileId}_m.webp`] ?? null;
     },
     [thumbCache],
   );
@@ -393,7 +398,10 @@ function ExhibitionEditPage() {
                     <SortablePosterCard
                       key={a.poster_id}
                       attached={a}
-                      thumbnailUrl={resolveThumb(a.posters?.poster_files?.[0]?.thumbnail_path)}
+                      thumbnailUrl={resolveThumb(
+                        a.posters?.id,
+                        a.posters?.poster_files?.[0]?.id,
+                      )}
                       onRemove={() => handleRemoveAttached(a.poster_id)}
                       removing={removingId === a.poster_id}
                     />
@@ -408,7 +416,7 @@ function ExhibitionEditPage() {
       {pickerOpen && (
         <PosterPickerModal
           alreadyAttached={alreadyAttached}
-          resolveThumbnail={resolveThumb}
+          resolveThumbnail={(p) => resolveThumb(p.id, p.poster_files?.[0]?.id)}
           onClose={() => setPickerOpen(false)}
           onConfirm={handleAttachConfirm}
         />

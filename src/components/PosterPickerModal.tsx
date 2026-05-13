@@ -6,8 +6,10 @@ import { listPostersForPicker, type PickerPoster } from "../lib/api";
 interface Props {
   /** poster ids already attached — disabled in the picker. */
   alreadyAttached: Set<string>;
-  /** Thumbnail URL resolver (Storage signed URL or public). Returning `null` shows placeholder. */
-  resolveThumbnail: (path: string | null | undefined) => string | null;
+  /** Resolve a picker poster to its pre-signed thumbnail URL, or null if unavailable.
+   *  Caller reconstructs `{poster_id}/{file_id}_m.webp` since production schema
+   *  has no `thumbnail_path` column. */
+  resolveThumbnail: (poster: PickerPoster) => string | null;
   onClose: () => void;
   onConfirm: (posterIds: string[]) => void | Promise<void>;
 }
@@ -162,7 +164,7 @@ export function PosterPickerModal({
               {sortedRows.map((p) => {
                 const attached = alreadyAttached.has(p.id);
                 const isSelected = selected.has(p.id);
-                const thumb = resolveThumbnail(p.poster_files?.[0]?.thumbnail_path);
+                const thumb = resolveThumbnail(p);
                 return (
                   <label
                     key={p.id}
