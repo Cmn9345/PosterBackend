@@ -1,7 +1,7 @@
 mod commands;
 mod services;
 
-use commands::{auth, upload, copaw, project, review, profile};
+use commands::{auth, upload, copaw, project, review, application, profile};
 use services::qwenpaw::task_queue::{ProcessingTask, TaskQueue};
 use services::upload_db::UploadDb;
 use std::sync::Arc;
@@ -504,12 +504,14 @@ pub fn run() {
             project::classify_file,
             project::reprocess_file,
             project::delete_project,
-            // Review
+            // Review (海報 / poster reviews)
             review::submit_project_for_review,
             review::submit_review,
             review::update_file_review,
             review::get_review_history,
             review::trigger_processing,
+            // Applications (申請單審核 — 不同 table、不同 status enum、不 sync Immich)
+            application::update_application_status,
             // Qwenpaw
             qwenpaw_enqueue,
             sign_thumbnail_url,
