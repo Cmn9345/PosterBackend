@@ -140,7 +140,7 @@ function UploadWizard() {
       });
       if (result && Array.isArray(result)) {
         const newFiles: SelectedFile[] = result.map((filePath) => {
-          const pathStr = typeof filePath === "string" ? filePath : filePath.path;
+          const pathStr = typeof filePath === "string" ? filePath : (filePath as any).path;
           const name = pathStr.split(/[\\/]/).pop() ?? pathStr;
           return {
             file_path: pathStr,

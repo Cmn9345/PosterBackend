@@ -485,6 +485,76 @@ impl SupabaseClient {
         }
     }
 
+    /// PATCH `applications` row — used by 申請單審核 workflow
+    /// (pending → in_review → approved/rejected → awaiting_closure → approved).
+    ///
+    /// The `applications` table currently only exposes `status` + `updated_at`
+    /// (verified live 2026-05-14 against the self-hosted Supabase — PATCHing
+    /// `reviewer_notes` / `rejection_reason` returns PGRST204 "column not in
+    /// schema cache"). Notes/reason are taken so callers don't have to change
+    /// signatures later, but for now we only log them — long-term they should
+    /// land in `application_timeline.note` via a separate INSERT.
+    pub async fn update_application_status(
+        &self,
+        application_id: &str,
+        status: &str,
+        reviewer_notes: Option<&str>,
+        rejection_reason: Option<&str>,
+    ) -> Result<(), String> {
+        if let Some(notes) = reviewer_notes {
+            info!(
+                "[Application] reviewer_notes (not persisted — schema lacks column): {}",
+                notes
+            );
+        }
+        if let Some(reason) = rejection_reason {
+            info!(
+                "[Application] rejection_reason (not persisted — schema lacks column): {}",
+                reason
+            );
+        }
+
+        let url = format!(
+            "{}/rest/v1/applications?id=eq.{}",
+            self.url, application_id
+        );
+        let key = self.bearer_key().await;
+
+        let body = json!({
+            "status": status,
+            "updated_at": chrono::Utc::now().to_rfc3339(),
+        });
+
+        let resp = self.client
+            .patch(&url)
+            .header("Authorization", format!("Bearer {}", key))
+            .header("apikey", &self.anon_key)
+            .header("Content-Type", "application/json")
+            .header("Prefer", "return=representation")
+            .body(body.to_string())
+            .send()
+            .await
+            .map_err(|e| format!("Update application status failed: {}", e))?;
+
+        if !resp.status().is_success() {
+            let status_code = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(format!("Update application status failed ({}): {}", status_code, text));
+        }
+
+        // PostgREST returns the affected rows when Prefer=return=representation.
+        // Empty array means 0 rows matched — the application_id was wrong.
+        let text = resp.text().await.unwrap_or_default();
+        if text.trim_start().starts_with("[]") {
+            return Err(format!(
+                "Application {} not found (0 rows updated)", application_id
+            ));
+        }
+
+        info!("[Supabase] Updated application {} → {}", application_id, status);
+        Ok(())
+    }
+
     /// Update `poster_files` processing status (+ optionally Immich asset id).
     ///
     /// The production schema does not expose `metadata_json` / `thumbnail_path`

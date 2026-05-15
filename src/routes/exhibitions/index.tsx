@@ -1,5 +1,6 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { Loader2, X, Search, FolderOpen, Pencil, Plus, Trash2 } from "lucide-react";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { invoke } from "@tauri-apps/api/core";
+import { Image as ImageIcon, Loader2, X, Search, FolderOpen, Pencil, Plus, Trash2 } from "lucide-react";
 import { useState, useEffect, useMemo, useCallback } from "react";
 import {
   listVocabularyThemesAdmin,
@@ -50,13 +51,38 @@ function ThemePosterManagement() {
     setError(null);
     try {
       // 管理模式撈全部（含 inactive）；瀏覽模式維持舊行為（只撈 active）。
-      const data = editMode
-        ? await listVocabularyThemesAdmin()
-        : await querySupabase<VocabularyTheme>(
-            "vocabulary_themes",
-            "is_active=eq.true&order=sort_order.asc",
-          );
-      setThemes(data);
+      // 並行拉所有 poster_files 的 themes 欄位，做唯一 poster 計數。
+      // `poster_count` 雖然在 schema 裡但沒任何 trigger / RPC 更新，
+      // 永遠是 0；客戶端算反而比寫 trigger 簡單，海報量在可預見的尺度
+      // 內（萬以下）也不需要伺服器端聚合。
+      const [data, files] = await Promise.all([
+        editMode
+          ? listVocabularyThemesAdmin()
+          : querySupabase<VocabularyTheme>(
+              "vocabulary_themes",
+              "is_active=eq.true&order=sort_order.asc",
+            ),
+        querySupabase<{ poster_id: string; themes: string[] | null }>(
+          "poster_files",
+          "select=poster_id,themes&themes=not.is.null&limit=10000",
+        ),
+      ]);
+
+      const postersByTheme = new Map<string, Set<string>>();
+      for (const f of files) {
+        if (!f.themes) continue;
+        for (const t of f.themes) {
+          if (!postersByTheme.has(t)) postersByTheme.set(t, new Set());
+          postersByTheme.get(t)!.add(f.poster_id);
+        }
+      }
+
+      setThemes(
+        data.map((t) => ({
+          ...t,
+          poster_count: postersByTheme.get(t.name)?.size ?? 0,
+        })),
+      );
     } catch (e) {
       setError(String(e));
     } finally {
@@ -138,37 +164,70 @@ function ThemePosterManagement() {
                   if (editMode) setEditingTheme(t);
                   else setSelectedTheme(t);
                 }}
-                className={`relative card-box p-5 text-left transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg cursor-pointer ${
+                className={`relative card-box overflow-hidden text-left transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg cursor-pointer ${
                   !t.is_active ? "opacity-50" : ""
                 }`}
-                style={{ backgroundColor: t.bg_color || "#f9fafb" }}
               >
-                <div className="flex items-start justify-between mb-3">
-                  <span className="text-3xl" aria-hidden>
-                    {t.icon || "📁"}
-                  </span>
-                  <span className="px-2 py-0.5 text-xs font-semibold rounded-full bg-white/80 text-gray-700">
-                    {t.poster_count ?? 0} 張
-                  </span>
-                </div>
-                <h3 className="text-lg font-bold mb-1" style={{ color: t.color || "#1f2937" }}>
-                  {t.name}
-                </h3>
-                <p className="text-xs text-gray-600 line-clamp-3 min-h-[3rem]">
-                  {t.description || "—"}
-                </p>
-                {editMode && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setDeleting(t);
-                    }}
-                    className="absolute bottom-3 right-3 p-1.5 rounded-md text-gray-400 hover:text-red-500 hover:bg-white/60 cursor-pointer"
-                    title="刪除主題"
+                {/* Banner image header — title 已內嵌於圖，下方文字僅留描述 */}
+                {t.cover_image ? (
+                  <div
+                    className="relative aspect-[16/9] w-full"
+                    style={{ backgroundColor: t.bg_color || "#f9fafb" }}
                   >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                    <img
+                      src={t.cover_image}
+                      alt={t.name}
+                      loading="lazy"
+                      className="w-full h-full object-cover"
+                    />
+                    <span className="absolute top-3 right-3 px-2 py-0.5 text-xs font-semibold rounded-full bg-white/90 text-gray-800 shadow-sm">
+                      {t.poster_count ?? 0} 張
+                    </span>
+                  </div>
+                ) : (
+                  <div
+                    className="flex items-start justify-between p-5"
+                    style={{ backgroundColor: t.bg_color || "#f9fafb" }}
+                  >
+                    <span className="text-3xl" aria-hidden>
+                      {t.icon || "📁"}
+                    </span>
+                    <span className="px-2 py-0.5 text-xs font-semibold rounded-full bg-white/80 text-gray-700">
+                      {t.poster_count ?? 0} 張
+                    </span>
+                  </div>
                 )}
+
+                {/* Caption — 描述（編輯模式留垃圾桶位置）*/}
+                <div className="relative px-4 pt-3 pb-10">
+                  {/* When the banner already shows the name, keep it in DOM
+                      for screen readers / search but visually hidden. */}
+                  {t.cover_image ? (
+                    <h3 className="sr-only">{t.name}</h3>
+                  ) : (
+                    <h3
+                      className="text-lg font-bold mb-1"
+                      style={{ color: t.color || "#1f2937" }}
+                    >
+                      {t.name}
+                    </h3>
+                  )}
+                  <p className="text-xs text-gray-600 line-clamp-3 min-h-[3rem]">
+                    {t.description || "—"}
+                  </p>
+                  {editMode && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setDeleting(t);
+                      }}
+                      className="absolute bottom-2 right-3 p-1.5 rounded-md text-gray-400 hover:text-red-500 hover:bg-white/60 cursor-pointer"
+                      title="刪除主題"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
               </div>
             ))
           )}
@@ -224,10 +283,28 @@ function ThemePosterDrawer({
   theme: VocabularyTheme;
   onClose: () => void;
 }) {
+  const navigate = useNavigate();
   const [rows, setRows] = useState<PosterFileRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+
+  /**
+   * Navigate based on poster status:
+   *   - draft   → /posters/$projectId/edit  (still being worked on)
+   *   - 其他    → /poster-reviews?id=...    (already submitted, review flow)
+   */
+  const openPoster = useCallback(
+    (posterId: string, status: string) => {
+      onClose();
+      if (status === "draft") {
+        navigate({ to: "/posters/$projectId/edit", params: { projectId: posterId } });
+      } else {
+        navigate({ to: "/poster-reviews", search: { id: posterId } });
+      }
+    },
+    [navigate, onClose],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -293,18 +370,13 @@ function ThemePosterDrawer({
           className="px-6 py-4 border-b border-gray-100 flex items-center justify-between"
           style={{ backgroundColor: theme.bg_color || "#f9fafb" }}
         >
-          <div className="flex items-center gap-3">
-            <span className="text-2xl" aria-hidden>
-              {theme.icon || "📁"}
-            </span>
-            <div>
-              <h3 className="text-lg font-bold" style={{ color: theme.color || "#1f2937" }}>
-                {theme.name}
-              </h3>
-              <p className="text-xs text-gray-600">
-                {loading ? "載入中…" : `${filteredSorted.length} 張海報`}
-              </p>
-            </div>
+          <div>
+            <h3 className="text-lg font-bold" style={{ color: theme.color || "#1f2937" }}>
+              {theme.name}
+            </h3>
+            <p className="text-xs text-gray-600">
+              {loading ? "載入中…" : `${filteredSorted.length} 張海報`}
+            </p>
           </div>
           <button
             onClick={onClose}
@@ -361,23 +433,35 @@ function ThemePosterDrawer({
                 const p = row.posters!;
                 const st = statusLabel[p.status] ?? { label: p.status, cls: "bg-gray-100 text-gray-600" };
                 return (
-                  <li key={row.id} className="py-3 hover:bg-gray-50 -mx-2 px-2 rounded-md transition-colors">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex-1 min-w-0">
-                        <h4 className="text-sm font-medium text-gray-800 truncate">
-                          {p.project_name || "（未命名）"}
-                        </h4>
-                        {row.description && (
-                          <p className="text-xs text-gray-500 line-clamp-2 mt-0.5">{row.description}</p>
-                        )}
-                        <p className="text-xs text-gray-400 mt-1">
-                          更新於 {p.updated_at?.slice(0, 10) ?? "—"}
-                        </p>
+                  <li key={row.id}>
+                    <button
+                      type="button"
+                      onClick={() => openPoster(p.id, p.status)}
+                      className="w-full text-left py-3 hover:bg-gray-50 -mx-2 px-2 rounded-md transition-colors cursor-pointer"
+                      title={p.status === "draft" ? "開啟編輯頁" : "前往上架審核"}
+                    >
+                      <div className="flex items-start gap-3">
+                        <PosterThumb posterId={p.id} fileId={row.id} />
+                        <div className="flex-1 min-w-0">
+                          <h4 className="text-sm font-medium text-gray-800 truncate">
+                            {p.project_name || "（未命名）"}
+                          </h4>
+                          {row.description && (
+                            <p className="text-xs text-gray-500 line-clamp-2 mt-0.5">
+                              {row.description}
+                            </p>
+                          )}
+                          <p className="text-xs text-gray-400 mt-1">
+                            更新於 {p.updated_at?.slice(0, 10) ?? "—"}
+                          </p>
+                        </div>
+                        <span
+                          className={`shrink-0 px-2 py-0.5 text-xs font-medium rounded-full ${st.cls}`}
+                        >
+                          {st.label}
+                        </span>
                       </div>
-                      <span className={`shrink-0 px-2 py-0.5 text-xs font-medium rounded-full ${st.cls}`}>
-                        {st.label}
-                      </span>
-                    </div>
+                    </button>
                   </li>
                 );
               })}
@@ -385,6 +469,40 @@ function ThemePosterDrawer({
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Self-signing 3:4 thumbnail (mirrors PosterPickerModal's pattern — Tauri
+ * `sign_thumbnail_url` returns a short-lived signed URL for the file's `_m.webp`
+ * variant in Supabase Storage). Falls back to an icon placeholder when the
+ * thumbnail is missing or the sign call errors.
+ */
+function PosterThumb({ posterId, fileId }: { posterId: string; fileId: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const path = `${posterId}/${fileId}_m.webp`;
+    invoke<string>("sign_thumbnail_url", { path })
+      .then((signed) => {
+        if (!cancelled) setUrl(signed);
+      })
+      .catch(() => {
+        /* placeholder shown */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [posterId, fileId]);
+
+  return (
+    <div className="shrink-0 w-14 h-[4.66rem] bg-gray-100 rounded-md flex items-center justify-center overflow-hidden">
+      {url ? (
+        <img src={url} alt="" className="w-full h-full object-cover" />
+      ) : (
+        <ImageIcon className="w-6 h-6 text-gray-300" />
+      )}
     </div>
   );
 }

@@ -1,17 +1,73 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useState, useEffect } from "react";
-import { Check, Clock, Sparkles, ArrowRight } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import {
+  Check,
+  Clock,
+  Sparkles,
+  ArrowRight,
+  Download,
+  AlertCircle,
+  Loader2,
+} from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useAuthStore } from "../stores/authStore";
 
 export const Route = createFileRoute("/onboarding")({
   component: Onboarding,
 });
 
+// Mirrors `commands::model_download::ModelStatus` (Rust).
+interface ModelStatus {
+  all_present: boolean;
+  missing: string[];
+  models_dir: string;
+}
+
+// Mirrors `commands::model_download::DownloadProgress` (Rust).
+interface DownloadProgress {
+  stage: "checking" | "downloading" | "renaming" | "complete" | "error";
+  file_index: number;
+  file_label: string;
+  file_name: string;
+  bytes_done: number;
+  bytes_total: number;
+  speed_bps: number;
+  error: string | null;
+}
+
+type Step = "consent" | "model-download" | "complete";
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+  return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
+}
+
+function formatSpeed(bps: number): string {
+  return bps > 0 ? `${formatBytes(bps)}/s` : "—";
+}
+
+function formatEta(remainingBytes: number, bps: number): string {
+  if (bps <= 0 || remainingBytes <= 0) return "—";
+  const seconds = Math.ceil(remainingBytes / bps);
+  if (seconds < 60) return `${seconds} 秒`;
+  if (seconds < 3600) return `${Math.ceil(seconds / 60)} 分鐘`;
+  return `${(seconds / 3600).toFixed(1)} 小時`;
+}
+
 function Onboarding() {
   const navigate = useNavigate();
   const { user } = useAuthStore();
-  const [step, setStep] = useState<"consent" | "complete">("consent");
+  const [step, setStep] = useState<Step>("consent");
   const [countdown, setCountdown] = useState(5);
+
+  // Model download state — populated only when step === "model-download".
+  const [progress, setProgress] = useState<DownloadProgress | null>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [downloadDone, setDownloadDone] = useState(false);
+  const downloadStartedRef = useRef(false);
 
   useEffect(() => {
     if (step !== "consent") return;
@@ -28,6 +84,67 @@ function Onboarding() {
     return () => clearInterval(timer);
   }, [step]);
 
+  /**
+   * Click handler for the 著作權 consent button. Probes the local model
+   * cache first: if both GGUFs are already on disk (returning install), we
+   * skip the download step entirely. Otherwise we transition into the
+   * download progress UI.
+   */
+  const handleAgree = async () => {
+    try {
+      const status = await invoke<ModelStatus>("check_models");
+      if (status.all_present) {
+        setStep("complete");
+      } else {
+        setStep("model-download");
+      }
+    } catch (e) {
+      // Tauri not available (e.g. running in web preview / Vite-only) or
+      // disk error. Don't block onboarding — surface in console and proceed.
+      console.error("[Onboarding] check_models failed:", e);
+      setStep("complete");
+    }
+  };
+
+  /**
+   * When the user lands on the model-download step, start the download and
+   * subscribe to the `model-download-progress` event for the progress bar.
+   * Guard with a ref so React StrictMode's double-invoke doesn't fire two
+   * concurrent downloads.
+   */
+  useEffect(() => {
+    if (step !== "model-download") return;
+    if (downloadStartedRef.current) return;
+    downloadStartedRef.current = true;
+
+    let unlisten: UnlistenFn | null = null;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        unlisten = await listen<DownloadProgress>(
+          "model-download-progress",
+          (event) => {
+            if (cancelled) return;
+            setProgress(event.payload);
+            if (event.payload.stage === "error" && event.payload.error) {
+              setDownloadError(event.payload.error);
+            }
+          },
+        );
+        await invoke<void>("download_models_if_missing");
+        if (!cancelled) setDownloadDone(true);
+      } catch (e) {
+        if (!cancelled) setDownloadError(String(e));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (unlisten) unlisten();
+    };
+  }, [step]);
+
   const primaryBtnClass =
     "flex items-center justify-center gap-2 w-full max-w-[380px] h-11 bg-primary text-white text-[15px] font-semibold rounded-[10px] hover:bg-primary-light disabled:opacity-40 disabled:cursor-not-allowed transition-colors";
 
@@ -41,7 +158,11 @@ function Onboarding() {
             海報資料庫後台
           </span>
         </div>
-        <span className="text-sm text-gray-400">首次登入 — 著作權同意</span>
+        <span className="text-sm text-gray-400">
+          {step === "consent" && "首次登入 — 著作權同意"}
+          {step === "model-download" && "首次登入 — AI 模型下載"}
+          {step === "complete" && "首次登入 — 完成"}
+        </span>
       </nav>
 
       <div className="max-w-2xl mx-auto px-4 sm:px-6 py-8">
@@ -166,15 +287,32 @@ function Onboarding() {
               <button
                 className={primaryBtnClass}
                 disabled={countdown > 0}
-                onClick={() => {
-                  // TODO: Wire to submit_onboarding invoke command once available
-                  setStep("complete");
-                }}
+                onClick={handleAgree}
               >
                 我同意
               </button>
             </div>
           </div>
+        )}
+
+        {/* AI 模型下載 */}
+        {step === "model-download" && (
+          <ModelDownloadStep
+            progress={progress}
+            error={downloadError}
+            done={downloadDone}
+            onContinue={() => setStep("complete")}
+            onRetry={() => {
+              setDownloadError(null);
+              setDownloadDone(false);
+              setProgress(null);
+              downloadStartedRef.current = false;
+              // Bouncing through "consent" would clobber state; force the
+              // effect to re-run by toggling and back.
+              setStep("consent");
+              setTimeout(() => setStep("model-download"), 50);
+            }}
+          />
         )}
 
         {/* Complete screen */}
@@ -201,6 +339,140 @@ function Onboarding() {
               </button>
             </div>
           </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Self-contained download progress UI. Renders three sub-states off of the
+ * latest `DownloadProgress` event:
+ *   - no progress yet → spinner + "initializing"
+ *   - downloading     → progress bar + speed + ETA
+ *   - error           → message + retry button
+ *   - done            → continue button
+ */
+function ModelDownloadStep({
+  progress,
+  error,
+  done,
+  onContinue,
+  onRetry,
+}: {
+  progress: DownloadProgress | null;
+  error: string | null;
+  done: boolean;
+  onContinue: () => void;
+  onRetry: () => void;
+}) {
+  // Total over both files; assumes 2 GGUFs.
+  // Approximate model + mmproj sizes — used when the HTTP Content-Length
+  // header is missing so the bar still moves.
+  const TOTAL_BYTES_ESTIMATE = 986_047_232 + 1_331_656_192;
+
+  const percent = progress?.bytes_total
+    ? Math.min(100, Math.round((progress.bytes_done / progress.bytes_total) * 100))
+    : 0;
+
+  return (
+    <div className="card-box py-10 px-6">
+      <div className="text-center mb-6">
+        <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-4">
+          {error ? (
+            <AlertCircle className="w-8 h-8 text-red-500" />
+          ) : done ? (
+            <Check className="w-8 h-8 text-emerald-600" />
+          ) : (
+            <Download className="w-8 h-8 text-primary animate-pulse" />
+          )}
+        </div>
+        <h1 className="text-xl font-bold text-gray-900 mb-2">
+          {error ? "AI 模型下載失敗" : done ? "AI 模型下載完成" : "正在下載 AI 模型"}
+        </h1>
+        <p className="text-sm text-gray-500 max-w-md mx-auto">
+          {error
+            ? "請檢查網路連線後重試。本機 AI 模型用於海報自動分析。"
+            : done
+              ? "您的帳號已準備就緒，請繼續完成設定"
+              : `首次安裝需要下載本地視覺語言模型（約 ${formatBytes(TOTAL_BYTES_ESTIMATE)}），請保持連線。`}
+        </p>
+      </div>
+
+      {!error && !done && (
+        <div className="space-y-3 mb-6">
+          {progress ? (
+            <>
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-gray-600">
+                  {progress.file_index} / 2 — {progress.file_label}
+                </span>
+                <span className="text-gray-400 text-xs">{progress.file_name}</span>
+              </div>
+              <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-primary transition-[width] duration-200"
+                  style={{ width: `${percent}%` }}
+                />
+              </div>
+              <div className="flex items-center justify-between text-xs text-gray-500">
+                <span>
+                  {formatBytes(progress.bytes_done)} / {formatBytes(progress.bytes_total)}
+                  {" • "}
+                  {percent}%
+                </span>
+                <span>
+                  {formatSpeed(progress.speed_bps)}
+                  {progress.stage === "downloading" && progress.speed_bps > 0 && (
+                    <>
+                      {" • 剩餘 "}
+                      {formatEta(
+                        progress.bytes_total - progress.bytes_done,
+                        progress.speed_bps,
+                      )}
+                    </>
+                  )}
+                </span>
+              </div>
+              <p className="text-xs text-gray-400 text-center">
+                {progress.stage === "downloading" && "下載中…"}
+                {progress.stage === "renaming" && "存檔中…"}
+                {progress.stage === "complete" && "已下載 ✓"}
+                {progress.stage === "checking" && "檢查檔案中…"}
+              </p>
+            </>
+          ) : (
+            <div className="flex items-center justify-center py-6 gap-2 text-sm text-gray-400">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              連線中…
+            </div>
+          )}
+        </div>
+      )}
+
+      {error && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
+          <p className="text-sm text-red-700 break-words">{error}</p>
+        </div>
+      )}
+
+      <div className="flex justify-end gap-2">
+        {error && (
+          <button
+            onClick={onRetry}
+            className="flex items-center justify-center gap-2 px-5 h-11 bg-primary text-white text-[15px] font-semibold rounded-[10px] hover:bg-primary-light transition-colors"
+          >
+            重試
+          </button>
+        )}
+        {done && (
+          <button
+            onClick={onContinue}
+            className="flex items-center justify-center gap-2 px-5 h-11 bg-primary text-white text-[15px] font-semibold rounded-[10px] hover:bg-primary-light transition-colors"
+          >
+            繼續
+            <ArrowRight className="w-4 h-4" />
+          </button>
         )}
       </div>
     </div>

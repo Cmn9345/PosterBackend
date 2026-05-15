@@ -683,18 +683,15 @@ function Applications() {
     async (action: "accept" | "approve" | "reject" | "close", app: Application) => {
       setActionLoading(true);
       try {
+        // 對 applications 表做 PATCH（不是 posters / projects）。
+        // 之前用 submit_review 是為了暫時兜，但它打的是 posters 表，application
+        // UUID 永遠匹配 0 row → 靜默無效。改用專屬 update_application_status。
         switch (action) {
           case "accept": {
-            // Update status to in_review via Supabase
-            await querySupabase(
-              "applications",
-              `id=eq.${app.id}`,
-            );
-            // TODO: Use PATCH semantics once available; for now use submit_review
-            await invoke("submit_review", {
-              decision: {
-                project_id: app.id,
-                decision: "approved",
+            await invoke("update_application_status", {
+              payload: {
+                application_id: app.id,
+                status: "in_review",
                 reviewer_notes: "接單處理 - 承辦者已接手",
               },
             });
@@ -702,10 +699,10 @@ function Applications() {
           }
           case "approve": {
             const notes = window.prompt("審核備註（可選）：") ?? "";
-            await invoke("submit_review", {
-              decision: {
-                project_id: app.id,
-                decision: "approved",
+            await invoke("update_application_status", {
+              payload: {
+                application_id: app.id,
+                status: "approved",
                 reviewer_notes: notes || undefined,
               },
             });
@@ -717,21 +714,20 @@ function Applications() {
               setActionLoading(false);
               return; // User cancelled
             }
-            await invoke("submit_review", {
-              decision: {
-                project_id: app.id,
-                decision: "rejected",
+            await invoke("update_application_status", {
+              payload: {
+                application_id: app.id,
+                status: "rejected",
                 rejection_reason: reason,
               },
             });
             break;
           }
           case "close": {
-            // Mark as approved/closed
-            await invoke("submit_review", {
-              decision: {
-                project_id: app.id,
-                decision: "approved",
+            await invoke("update_application_status", {
+              payload: {
+                application_id: app.id,
+                status: "approved",
                 reviewer_notes: "結案確認",
               },
             });
