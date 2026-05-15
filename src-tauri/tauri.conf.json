@@ -37,6 +37,9 @@
     ],
     "resources": [
       "resources/llama-server"
-    ]
+    ],
+    "macOS": {
+      "signingIdentity": "-"
+    }
   }
 }
