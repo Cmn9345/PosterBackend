@@ -4,6 +4,7 @@ fn main() {
     // production fallback for when no `.env` is present (e.g. installed dmg).
     println!("cargo:rerun-if-env-changed=POSTER_SUPABASE_URL");
     println!("cargo:rerun-if-env-changed=POSTER_SUPABASE_ANON_KEY");
+    println!("cargo:rerun-if-env-changed=POSTER_MODEL_BASE_URL");
 
     tauri_build::build()
 }

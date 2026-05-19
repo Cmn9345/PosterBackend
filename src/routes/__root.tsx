@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useAuthStore } from "../stores/authStore";
 import { useCoPawNotification } from "../hooks/useCoPawNotification";
 import { PermissionModal } from "../components/PermissionModal";
+import { UpdateBanner } from "../components/UpdateBanner";
 
 const navItems = [
   { to: "/", label: "儀表盤" },
@@ -50,6 +51,7 @@ function RootLayout() {
 
   return (
     <div className="min-h-screen bg-surface">
+      <UpdateBanner />
       {/* Top Nav */}
       <nav className="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between sticky top-0 z-40">
         <div className="flex items-center gap-3">

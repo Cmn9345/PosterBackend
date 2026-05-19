@@ -1,6 +1,6 @@
 [package]
 name = "poster-admin-app"
-version = "0.3.0"
+version = "0.4.0"
 description = "慈濟海報資料庫後台 Tauri Desktop App"
 authors = ["Tzu Chi Foundation"]
 license = "MIT"
@@ -25,6 +25,8 @@ tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-http = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 reqwest = { version = "0.12", features = ["json", "multipart", "stream"] }
 tokio = { version = "1", features = ["full"] }
 uuid = { version = "1", features = ["v4"] }

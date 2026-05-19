@@ -27,7 +27,7 @@ use tokio::io::AsyncWriteExt;
 /// Override at build time: `POSTER_MODEL_BASE_URL=https://… npm run tauri build`.
 const COMPILE_BASE_URL: Option<&str> = option_env!("POSTER_MODEL_BASE_URL");
 const FALLBACK_BASE_URL: &str =
-    "https://github.com/Cmn9345/PosterBackend/releases/download/models-v1";
+    "https://pub-65a3b4a43f00484d97c9a5709dfe7fd6.r2.dev/models";
 
 /// The two GGUF files we need. Names must match `llama_sidecar::resolve_model`.
 const MODEL_FILES: &[ModelFileSpec] = &[

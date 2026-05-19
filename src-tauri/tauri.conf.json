@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "海報資料庫後台",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "identifier": "org.tzuchi.poster-admin",
   "build": {
     "frontendDist": "../dist",
@@ -27,7 +27,8 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["dmg"],
+    "targets": ["app", "dmg"],
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -40,6 +41,15 @@
     ],
     "macOS": {
       "signingIdentity": "-"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEM4QTIzMkU1RUY5MDE5QwpSV1NjQWZsZUxpT0tERVkwem1QWHE4Mkg0Z3FRenh6SitYQkR3YXM0cUFCSVRrN0ltVEFNTmY0YQo=",
+      "endpoints": [
+        "https://pub-65a3b4a43f00484d97c9a5709dfe7fd6.r2.dev/latest/latest.json"
+      ]
     }
   }
 }

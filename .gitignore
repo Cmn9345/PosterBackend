@@ -39,3 +39,9 @@ src/routeTree.gen.ts
 
 # Claude Code local state (per-session logs, history). Not for the repo.
 .claude/
+
+# Wrangler local state cache (auto-generated)
+.wrangler/
+
+# Stray probe file from R2 bucket setup
+.placeholder

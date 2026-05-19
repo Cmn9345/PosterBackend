@@ -1,0 +1,159 @@
+name: Release → R2
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version (without v prefix, e.g. 0.3.1)"
+        required: true
+
+jobs:
+  build-and-publish:
+    runs-on: macos-latest  # Apple Silicon (M1+)
+    timeout-minutes: 60
+    env:
+      # Tauri updater signing (Ed25519 minisign keypair generated locally)
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+      # Model download URL baked into the dmg (points to R2 models/ prefix)
+      POSTER_MODEL_BASE_URL: https://pub-65a3b4a43f00484d97c9a5709dfe7fd6.r2.dev/models
+      # R2 S3 endpoint
+      R2_ENDPOINT: https://${{ secrets.CF_R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+      R2_BUCKET: posteradminapp
+      R2_PUBLIC_BASE: https://pub-65a3b4a43f00484d97c9a5709dfe7fd6.r2.dev
+      AWS_ACCESS_KEY_ID: ${{ secrets.CF_R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Setup Rust (aarch64-apple-darwin)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Cache Rust target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install npm deps
+        run: npm ci
+
+      - name: Verify tauri.conf version matches tag
+        run: |
+          CONF_VER=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          if [ "$CONF_VER" != "${{ steps.ver.outputs.version }}" ]; then
+            echo "::error::tauri.conf.json version ($CONF_VER) ≠ tag (${{ steps.ver.outputs.version }})"
+            exit 1
+          fi
+
+      - name: Build Tauri app (aarch64)
+        run: npm run tauri build -- --target aarch64-apple-darwin
+
+      - name: Locate artifacts
+        id: artifacts
+        run: |
+          BUNDLE_DIR=src-tauri/target/aarch64-apple-darwin/release/bundle
+          DMG=$(ls "$BUNDLE_DIR/dmg/"*.dmg | head -1)
+          APP_TARBALL=$(ls "$BUNDLE_DIR/macos/"*.app.tar.gz | head -1)
+          APP_SIG="${APP_TARBALL}.sig"
+          if [ ! -f "$APP_SIG" ]; then
+            echo "::error::Missing updater signature at $APP_SIG"
+            exit 1
+          fi
+          echo "dmg=$DMG" >> "$GITHUB_OUTPUT"
+          echo "app_tarball=$APP_TARBALL" >> "$GITHUB_OUTPUT"
+          echo "app_sig=$APP_SIG" >> "$GITHUB_OUTPUT"
+          echo "Artifacts:"
+          ls -la "$DMG" "$APP_TARBALL" "$APP_SIG"
+
+      - name: Upload dmg + updater artifacts to R2
+        run: |
+          VER="${{ steps.ver.outputs.version }}"
+          DMG="${{ steps.artifacts.outputs.dmg }}"
+          APP="${{ steps.artifacts.outputs.app_tarball }}"
+          SIG="${{ steps.artifacts.outputs.app_sig }}"
+
+          # Versioned dmg (immutable, for archive)
+          aws s3 cp "$DMG" \
+            "s3://$R2_BUCKET/releases/v${VER}/PosterAdmin_${VER}_aarch64.dmg" \
+            --endpoint-url "$R2_ENDPOINT" \
+            --content-type "application/x-apple-diskimage"
+
+          # latest/ dmg (overwrite — what QR code points to)
+          aws s3 cp "$DMG" \
+            "s3://$R2_BUCKET/latest/PosterAdmin_aarch64.dmg" \
+            --endpoint-url "$R2_ENDPOINT" \
+            --content-type "application/x-apple-diskimage"
+
+          # Updater artifact (auto-update payload)
+          aws s3 cp "$APP" \
+            "s3://$R2_BUCKET/latest/PosterAdmin_aarch64.app.tar.gz" \
+            --endpoint-url "$R2_ENDPOINT" \
+            --content-type "application/gzip"
+
+      - name: Generate + upload latest.json (updater manifest)
+        run: |
+          VER="${{ steps.ver.outputs.version }}"
+          SIG=$(cat "${{ steps.artifacts.outputs.app_sig }}")
+          NOTES=$(git tag -l --format='%(contents)' "${{ steps.ver.outputs.tag }}" | head -c 500)
+          PUB_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          jq -n \
+            --arg version "$VER" \
+            --arg notes "$NOTES" \
+            --arg pub_date "$PUB_DATE" \
+            --arg sig "$SIG" \
+            --arg url "$R2_PUBLIC_BASE/latest/PosterAdmin_aarch64.app.tar.gz" \
+            '{
+              version: $version,
+              notes: $notes,
+              pub_date: $pub_date,
+              platforms: {
+                "darwin-aarch64": {
+                  signature: $sig,
+                  url: $url
+                }
+              }
+            }' > /tmp/latest.json
+
+          cat /tmp/latest.json
+
+          aws s3 cp /tmp/latest.json \
+            "s3://$R2_BUCKET/latest/latest.json" \
+            --endpoint-url "$R2_ENDPOINT" \
+            --content-type "application/json" \
+            --cache-control "no-cache, max-age=60"
+
+      - name: Summary
+        run: |
+          VER="${{ steps.ver.outputs.version }}"
+          echo "### ✅ Released v${VER} → R2" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Download URLs:**" >> $GITHUB_STEP_SUMMARY
+          echo "- dmg (latest): $R2_PUBLIC_BASE/latest/PosterAdmin_aarch64.dmg" >> $GITHUB_STEP_SUMMARY
+          echo "- dmg (archive): $R2_PUBLIC_BASE/releases/v${VER}/PosterAdmin_${VER}_aarch64.dmg" >> $GITHUB_STEP_SUMMARY
+          echo "- updater manifest: $R2_PUBLIC_BASE/latest/latest.json" >> $GITHUB_STEP_SUMMARY
+          echo "- updater payload: $R2_PUBLIC_BASE/latest/PosterAdmin_aarch64.app.tar.gz" >> $GITHUB_STEP_SUMMARY
