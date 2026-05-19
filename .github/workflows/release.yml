@@ -20,6 +20,9 @@ jobs:
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
       # Model download URL baked into the dmg (points to R2 models/ prefix)
       POSTER_MODEL_BASE_URL: https://pub-65a3b4a43f00484d97c9a5709dfe7fd6.r2.dev/models
+      # Supabase connection — baked at compile-time via option_env!() in src-tauri/src/lib.rs
+      POSTER_SUPABASE_URL: ${{ secrets.POSTER_SUPABASE_URL }}
+      POSTER_SUPABASE_ANON_KEY: ${{ secrets.POSTER_SUPABASE_ANON_KEY }}
       # R2 S3 endpoint
       R2_ENDPOINT: https://${{ secrets.CF_R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
       R2_BUCKET: posteradminapp
