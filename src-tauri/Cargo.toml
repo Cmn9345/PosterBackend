@@ -1,6 +1,6 @@
 [package]
 name = "poster-admin-app"
-version = "0.4.0"
+version = "0.4.1"
 description = "慈濟海報資料庫後台 Tauri Desktop App"
 authors = ["Tzu Chi Foundation"]
 license = "MIT"
